@@ -2,6 +2,7 @@
 
 import type { FormEvent } from "react";
 import { useEffect, useMemo, useRef, useState } from "react";
+import { signIn, signOut, useSession } from "next-auth/react";
 import type { Socket } from "socket.io-client";
 import { io } from "socket.io-client";
 
@@ -40,6 +41,7 @@ type AckResult = {
 };
 
 export default function Home() {
+  const { data: session, status } = useSession();
   const socketRef = useRef<Socket | null>(null);
   const messagesRef = useRef<HTMLOListElement | null>(null);
   const [nickname, setNickname] = useState("");
@@ -48,6 +50,8 @@ export default function Home() {
   const [joined, setJoined] = useState(false);
   const [messages, setMessages] = useState<Message[]>([]);
   const [presence, setPresence] = useState<Presence>({ count: 0, users: [] });
+  const isAuthenticated = status === "authenticated";
+  const sessionName = session?.user?.name || session?.user?.email || "";
 
   const socket = useMemo<Socket | null>(() => {
     if (typeof window === "undefined") {
@@ -96,6 +100,12 @@ export default function Home() {
     });
   }, [messages]);
 
+  useEffect(() => {
+    if (!nickname && sessionName) {
+      setNickname(sessionName.slice(0, 24));
+    }
+  }, [nickname, sessionName]);
+
   function joinRoom(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     socketRef.current?.emit("user:join", nickname, (result: AckResult) => {
@@ -128,13 +138,36 @@ export default function Home() {
             <p className="eyebrow">Next.js local test room</p>
             <h1>Wordrill Chat</h1>
           </div>
-          <div className="statusPill" aria-live="polite">
-            <span className="statusDot" />
-            <span>{presence.count} online</span>
+          <div className="headerActions">
+            {isAuthenticated ? (
+              <button className="secondaryButton" type="button" onClick={() => signOut()}>
+                Logout
+              </button>
+            ) : null}
+            <div className="statusPill" aria-live="polite">
+              <span className="statusDot" />
+              <span>{presence.count} online</span>
+            </div>
           </div>
         </header>
 
-        {!joined ? (
+        {status === "loading" ? (
+          <div className="authView">
+            <p className="authTitle">로그인 상태를 확인하고 있습니다.</p>
+          </div>
+        ) : !isAuthenticated ? (
+          <div className="authView">
+            <div className="authContent">
+              <p className="authTitle">Google 계정으로 로그인하세요.</p>
+              <p className="authDescription">
+                로그인 후 닉네임을 확인하고 채팅방에 입장할 수 있습니다.
+              </p>
+              <button type="button" onClick={() => signIn("google")}>
+                Continue with Google
+              </button>
+            </div>
+          </div>
+        ) : !joined ? (
           <div className="joinView">
             <form className="joinForm" onSubmit={joinRoom}>
               <label htmlFor="nickname">Nickname</label>

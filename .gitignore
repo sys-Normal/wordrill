@@ -3,4 +3,5 @@ node_modules/
 *.tsbuildinfo
 npm-debug.log*
 .env
+.env*.local
 .DS_Store

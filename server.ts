@@ -1,4 +1,5 @@
 import http from "node:http";
+import { loadEnvConfig } from "@next/env";
 import next from "next";
 import { Server, type Socket } from "socket.io";
 
@@ -29,6 +30,8 @@ type AckResult = {
 type AckCallback = (result: AckResult) => void;
 
 const dev = process.env.NODE_ENV !== "production";
+loadEnvConfig(process.cwd(), dev);
+
 const app = next({ dev });
 const handle = app.getRequestHandler();
 const PORT = Number(process.env.PORT || 3001);

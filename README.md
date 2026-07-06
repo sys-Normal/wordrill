@@ -11,6 +11,15 @@ npm run dev
 
 브라우저 창 두 개에서 `http://localhost:3001`을 열고 서로 다른 닉네임으로 입장하면 실시간 채팅을 테스트할 수 있습니다.
 
+## Google 로그인 설정
+
+Google Cloud Console에서 OAuth 2.0 웹 클라이언트를 만들고 아래 주소를 등록합니다.
+
+- Authorized JavaScript origins: `http://localhost`, `http://localhost:3001`
+- Authorized redirect URIs: `http://localhost:3001/api/auth/callback/google`
+
+`.env.local.example`을 참고해 로컬 환경 변수 파일을 준비합니다. 실제 `.env.local`은 저장소에 커밋하지 않습니다.
+
 ## 스크립트
 
 - `npm run dev`: 로컬 Next.js 및 Socket.IO 서버를 시작합니다
@@ -21,6 +30,7 @@ npm run dev
 
 - Next.js App Router 기반 화면
 - Socket.IO를 사용한 실시간 메시지
+- Auth.js와 Google OAuth 기반 로그인
 - 닉네임 기반 채팅방 입장
 - 온라인 사용자 목록
 - 입장 및 퇴장 시스템 메시지
@@ -30,6 +40,7 @@ npm run dev
 ## 프로젝트 구조
 
 - `app/`: 채팅 UI와 전역 스타일
+- `auth.ts`: Auth.js Google Provider 설정
 - `server.ts`: Socket.IO 이벤트를 포함한 커스텀 Next.js 서버
 - `next.config.js`: Next.js 설정
 

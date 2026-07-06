@@ -49,6 +49,16 @@ button:hover {
   background: var(--accent-strong);
 }
 
+.secondaryButton {
+  border: 1px solid var(--line);
+  background: white;
+  color: var(--ink);
+}
+
+.secondaryButton:hover {
+  background: #f7efe2;
+}
+
 input {
   min-width: 0;
   width: 100%;
@@ -94,6 +104,12 @@ input:focus {
   border-bottom: 1px solid var(--line);
 }
 
+.headerActions {
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+}
+
 .eyebrow {
   margin: 0 0 4px;
   color: var(--muted);
@@ -133,6 +149,30 @@ h1 {
   display: grid;
   place-items: center;
   padding: 24px;
+}
+
+.authView {
+  flex: 1;
+  display: grid;
+  place-items: center;
+  padding: 24px;
+  text-align: center;
+}
+
+.authContent {
+  width: min(420px, 100%);
+}
+
+.authTitle {
+  margin: 0 0 8px;
+  font-size: 1.15rem;
+  font-weight: 800;
+}
+
+.authDescription {
+  margin: 0 0 18px;
+  color: var(--muted);
+  line-height: 1.5;
 }
 
 .joinForm {
@@ -269,6 +309,11 @@ h1 {
   .chatHeader {
     align-items: flex-start;
     flex-direction: column;
+  }
+
+  .headerActions {
+    width: 100%;
+    justify-content: space-between;
   }
 
   .roomView {
