@@ -3,10 +3,10 @@
   "version": "0.1.0",
   "private": true,
   "description": "Next.js-based realtime chat service prototype.",
-  "main": "server.js",
+  "main": "server.ts",
   "scripts": {
-    "start": "node server.js",
-    "dev": "node server.js",
+    "start": "tsx server.ts",
+    "dev": "tsx server.ts",
     "build": "next build"
   },
   "dependencies": {
@@ -14,9 +14,15 @@
     "react": "^19.0.0",
     "react-dom": "^19.0.0",
     "socket.io": "^4.7.5",
-    "socket.io-client": "^4.7.5"
+    "socket.io-client": "^4.7.5",
+    "tsx": "^4.23.0"
   },
   "engines": {
     "node": ">=20"
+  },
+  "devDependencies": {
+    "@types/react": "^19.2.17",
+    "@types/react-dom": "^19.2.3",
+    "typescript": "^6.0.3"
   }
 }

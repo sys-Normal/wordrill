@@ -1,14 +1,40 @@
-const http = require("http");
-const next = require("next");
-const { Server } = require("socket.io");
+import http from "node:http";
+import next from "next";
+import { Server, type Socket } from "socket.io";
+
+type ChatMessage = {
+  id: string;
+  userId: string;
+  nickname: string;
+  text: string;
+  createdAt: string;
+};
+
+type SystemMessage = {
+  id: string;
+  text: string;
+  createdAt: string;
+};
+
+type ChatPayload = {
+  text?: string;
+};
+
+type AckResult = {
+  ok: boolean;
+  error?: string;
+  nickname?: string;
+};
+
+type AckCallback = (result: AckResult) => void;
 
 const dev = process.env.NODE_ENV !== "production";
 const app = next({ dev });
 const handle = app.getRequestHandler();
 const PORT = Number(process.env.PORT || 3001);
 
-const users = new Map();
-const messages = [];
+const users = new Map<string, string>();
+const messages: ChatMessage[] = [];
 const MAX_HISTORY = 50;
 
 app.prepare().then(() => {
@@ -31,10 +57,10 @@ app.prepare().then(() => {
 
   const io = new Server(server);
 
-  io.on("connection", (socket) => {
+  io.on("connection", (socket: Socket) => {
     socket.emit("chat:history", messages);
 
-    socket.on("user:join", (nickname, ack) => {
+    socket.on("user:join", (nickname: unknown, ack?: AckCallback) => {
       const cleanName = normalizeNickname(nickname);
 
       users.set(socket.id, cleanName);
@@ -44,18 +70,20 @@ app.prepare().then(() => {
       });
 
       emitPresence(io);
-      io.emit("system:message", {
+      const message: SystemMessage = {
         id: createId(),
         text: `${cleanName} joined the room.`,
         createdAt: new Date().toISOString()
-      });
+      };
+
+      io.emit("system:message", message);
 
       if (typeof ack === "function") {
         ack({ ok: true, nickname: cleanName });
       }
     });
 
-    socket.on("chat:message", (payload, ack) => {
+    socket.on("chat:message", (payload: ChatPayload, ack?: AckCallback) => {
       const nickname = users.get(socket.id);
       const text = normalizeMessage(payload && payload.text);
 
@@ -66,7 +94,7 @@ app.prepare().then(() => {
         return;
       }
 
-      const message = {
+      const message: ChatMessage = {
         id: createId(),
         userId: socket.id,
         nickname,
@@ -92,11 +120,13 @@ app.prepare().then(() => {
 
       if (nickname) {
         emitPresence(io);
-        io.emit("system:message", {
+        const message: SystemMessage = {
           id: createId(),
           text: `${nickname} left the room.`,
           createdAt: new Date().toISOString()
-        });
+        };
+
+        io.emit("system:message", message);
       }
     });
   });
@@ -106,19 +136,19 @@ app.prepare().then(() => {
   });
 });
 
-function emitPresence(io) {
+function emitPresence(io: Server) {
   io.emit("presence:update", {
     count: users.size,
     users: Array.from(users.values()).sort((a, b) => a.localeCompare(b))
   });
 }
 
-function normalizeNickname(value) {
+function normalizeNickname(value: unknown) {
   const nickname = String(value || "").trim().replace(/\s+/g, " ");
   return nickname.slice(0, 24) || `Guest-${Math.floor(Math.random() * 9000) + 1000}`;
 }
 
-function normalizeMessage(value) {
+function normalizeMessage(value: unknown) {
   return String(value || "").trim().slice(0, 500);
 }
 

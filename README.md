@@ -30,7 +30,7 @@ npm run dev
 ## 프로젝트 구조
 
 - `app/`: 채팅 UI와 전역 스타일
-- `server.js`: Socket.IO 이벤트를 포함한 커스텀 Next.js 서버
+- `server.ts`: Socket.IO 이벤트를 포함한 커스텀 Next.js 서버
 - `next.config.js`: Next.js 설정
 
 ## 외부 테스트 전 다음 작업
