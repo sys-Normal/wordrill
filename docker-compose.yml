@@ -1,0 +1,16 @@
+services:
+  postgres:
+    image: postgres:16
+    container_name: wordrill-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: wordrill
+      POSTGRES_USER: wordrill
+      POSTGRES_PASSWORD: wordrill
+    ports:
+      - "5432:5432"
+    volumes:
+      - wordrill-postgres-data:/var/lib/postgresql/data
+
+volumes:
+  wordrill-postgres-data:

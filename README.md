@@ -6,10 +6,22 @@
 
 ```bash
 npm install
+docker compose up -d
+npm run db:migrate
 npm run dev
 ```
 
 브라우저 창 두 개에서 `http://localhost:3001`을 열고 서로 다른 닉네임으로 입장하면 실시간 채팅을 테스트할 수 있습니다.
+
+## 데이터베이스 설정
+
+로컬 개발은 Docker Compose의 PostgreSQL을 사용합니다. `.env.local`에 아래 값을 설정합니다.
+
+```bash
+DATABASE_URL=postgresql://wordrill:wordrill@localhost:5432/wordrill
+```
+
+프로젝트의 DB 스크립트는 Next.js와 같은 방식으로 `.env.local`을 읽은 뒤 Prisma CLI를 실행합니다.
 
 ## Google 로그인 설정
 
@@ -23,6 +35,8 @@ Google Cloud Console에서 OAuth 2.0 웹 클라이언트를 만들고 아래 주
 ## 스크립트
 
 - `npm run dev`: 로컬 Next.js 및 Socket.IO 서버를 시작합니다
+- `npm run db:migrate`: Prisma 마이그레이션을 적용하고 client를 생성합니다
+- `npm run db:generate`: Prisma client를 생성합니다
 - `npm run build`: 배포용 Next.js 빌드를 생성합니다
 - `npm start`: 커스텀 서버를 시작합니다
 
@@ -34,19 +48,19 @@ Google Cloud Console에서 OAuth 2.0 웹 클라이언트를 만들고 아래 주
 - 닉네임 기반 채팅방 입장
 - 온라인 사용자 목록
 - 입장 및 퇴장 시스템 메시지
-- 최근 메시지 50개를 메모리에 보관
+- 최근 메시지 50개를 PostgreSQL에서 불러오기
 - `/health` 상태 확인 엔드포인트
 
 ## 프로젝트 구조
 
 - `app/`: 채팅 UI와 전역 스타일
 - `auth.ts`: Auth.js Google Provider 설정
+- `prisma/schema.prisma`: 사용자, 채팅방, 메시지 데이터 모델
 - `server.ts`: Socket.IO 이벤트를 포함한 커스텀 Next.js 서버
 - `next.config.js`: Next.js 설정
 
 ## 외부 테스트 전 다음 작업
 
-- 사용자와 메시지를 저장할 영구 저장소 추가
 - 계정 및 세션 인증 추가
 - 채팅방 또는 채널 기능 추가
 - 기본적인 모더레이션 및 신고 기능 추가

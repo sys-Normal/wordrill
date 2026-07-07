@@ -1,6 +1,7 @@
 import http from "node:http";
 import { loadEnvConfig } from "@next/env";
 import next from "next";
+import { PrismaClient } from "@prisma/client";
 import { Server, type Socket } from "socket.io";
 
 type ChatMessage = {
@@ -35,10 +36,15 @@ loadEnvConfig(process.cwd(), dev);
 const app = next({ dev });
 const handle = app.getRequestHandler();
 const PORT = Number(process.env.PORT || 3001);
+const prisma = new PrismaClient();
 
 const users = new Map<string, string>();
-const messages: ChatMessage[] = [];
 const MAX_HISTORY = 50;
+const DEFAULT_ROOM = {
+  name: "General",
+  slug: "general"
+};
+let defaultRoomIdPromise: Promise<string> | null = null;
 
 app.prepare().then(() => {
   const server = http.createServer((req, res) => {
@@ -48,7 +54,6 @@ app.prepare().then(() => {
         JSON.stringify({
           ok: true,
           users: users.size,
-          messages: messages.length,
           uptime: Math.round(process.uptime())
         })
       );
@@ -60,8 +65,13 @@ app.prepare().then(() => {
 
   const io = new Server(server);
 
-  io.on("connection", (socket: Socket) => {
-    socket.emit("chat:history", messages);
+  io.on("connection", async (socket: Socket) => {
+    try {
+      socket.emit("chat:history", await loadRecentMessages());
+    } catch (error) {
+      console.error("Failed to load chat history", error);
+      socket.emit("chat:history", []);
+    }
 
     socket.on("user:join", (nickname: unknown, ack?: AckCallback) => {
       const cleanName = normalizeNickname(nickname);
@@ -86,7 +96,7 @@ app.prepare().then(() => {
       }
     });
 
-    socket.on("chat:message", (payload: ChatPayload, ack?: AckCallback) => {
+    socket.on("chat:message", async (payload: ChatPayload, ack?: AckCallback) => {
       const nickname = users.get(socket.id);
       const text = normalizeMessage(payload && payload.text);
 
@@ -97,23 +107,24 @@ app.prepare().then(() => {
         return;
       }
 
-      const message: ChatMessage = {
-        id: createId(),
-        userId: socket.id,
-        nickname,
-        text,
-        createdAt: new Date().toISOString()
-      };
+      try {
+        const message = await saveChatMessage({
+          socketId: socket.id,
+          nickname,
+          text
+        });
 
-      messages.push(message);
-      if (messages.length > MAX_HISTORY) {
-        messages.shift();
-      }
+        io.emit("chat:message", message);
 
-      io.emit("chat:message", message);
+        if (typeof ack === "function") {
+          ack({ ok: true });
+        }
+      } catch (error) {
+        console.error("Failed to save chat message", error);
 
-      if (typeof ack === "function") {
-        ack({ ok: true });
+        if (typeof ack === "function") {
+          ack({ ok: false, error: "Message could not be saved." });
+        }
       }
     });
 
@@ -153,6 +164,62 @@ function normalizeNickname(value: unknown) {
 
 function normalizeMessage(value: unknown) {
   return String(value || "").trim().slice(0, 500);
+}
+
+async function loadRecentMessages(): Promise<ChatMessage[]> {
+  const roomId = await getDefaultRoomId();
+  const rows = await prisma.message.findMany({
+    where: { roomId },
+    orderBy: { createdAt: "desc" },
+    take: MAX_HISTORY
+  });
+
+  return rows.reverse().map((message) => ({
+    id: message.id,
+    userId: message.userId || "",
+    nickname: message.nickname,
+    text: message.text,
+    createdAt: message.createdAt.toISOString()
+  }));
+}
+
+async function saveChatMessage({
+  socketId,
+  nickname,
+  text
+}: {
+  socketId: string;
+  nickname: string;
+  text: string;
+}): Promise<ChatMessage> {
+  const roomId = await getDefaultRoomId();
+  const message = await prisma.message.create({
+    data: {
+      roomId,
+      nickname,
+      text
+    }
+  });
+
+  return {
+    id: message.id,
+    userId: socketId,
+    nickname: message.nickname,
+    text: message.text,
+    createdAt: message.createdAt.toISOString()
+  };
+}
+
+function getDefaultRoomId() {
+  defaultRoomIdPromise ??= prisma.room
+    .upsert({
+      where: { slug: DEFAULT_ROOM.slug },
+      update: {},
+      create: DEFAULT_ROOM
+    })
+    .then((room) => room.id);
+
+  return defaultRoomIdPromise;
 }
 
 function createId() {

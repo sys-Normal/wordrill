@@ -50,6 +50,7 @@ export default function Home() {
   const [joined, setJoined] = useState(false);
   const [messages, setMessages] = useState<Message[]>([]);
   const [presence, setPresence] = useState<Presence>({ count: 0, users: [] });
+  const [nicknameInitialized, setNicknameInitialized] = useState(false);
   const isAuthenticated = status === "authenticated";
   const sessionName = session?.user?.name || session?.user?.email || "";
 
@@ -101,10 +102,11 @@ export default function Home() {
   }, [messages]);
 
   useEffect(() => {
-    if (!nickname && sessionName) {
+    if (!nicknameInitialized && sessionName) {
       setNickname(sessionName.slice(0, 24));
+      setNicknameInitialized(true);
     }
-  }, [nickname, sessionName]);
+  }, [nicknameInitialized, sessionName]);
 
   function joinRoom(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -178,7 +180,10 @@ export default function Home() {
                   autoComplete="nickname"
                   placeholder="e.g. kww"
                   value={nickname}
-                  onChange={(event) => setNickname(event.target.value)}
+                  onChange={(event) => {
+                    setNicknameInitialized(true);
+                    setNickname(event.target.value);
+                  }}
                 />
                 <button type="submit">Join</button>
               </div>
