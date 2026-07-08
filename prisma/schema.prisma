@@ -14,6 +14,9 @@ model User {
   image     String?
   nickname  String?
   googleSub String?   @unique
+  loginId   String?   @unique
+  passwordHash String?
+  isTestUser Boolean  @default(false)
   createdAt DateTime  @default(now())
   updatedAt DateTime  @updatedAt
   messages  Message[]

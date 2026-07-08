@@ -1,7 +1,7 @@
 import http from "node:http";
 import { loadEnvConfig } from "@next/env";
 import next from "next";
-import { PrismaClient } from "@prisma/client";
+import { prisma } from "./lib/prisma";
 import { Server, type Socket } from "socket.io";
 
 type ChatMessage = {
@@ -22,6 +22,24 @@ type ChatPayload = {
   text?: string;
 };
 
+type JoinPayload = {
+  email?: string;
+  nickname?: string;
+  userId?: string;
+};
+
+type PresenceUser = {
+  id: string;
+  nickname: string;
+  sockets: number;
+};
+
+type OnlineUser = {
+  nickname: string;
+  sockets: Set<string>;
+  userId: string;
+};
+
 type AckResult = {
   ok: boolean;
   error?: string;
@@ -36,9 +54,9 @@ loadEnvConfig(process.cwd(), dev);
 const app = next({ dev });
 const handle = app.getRequestHandler();
 const PORT = Number(process.env.PORT || 3001);
-const prisma = new PrismaClient();
 
-const users = new Map<string, string>();
+const socketUsers = new Map<string, string>();
+const onlineUsers = new Map<string, OnlineUser>();
 const MAX_HISTORY = 50;
 const DEFAULT_ROOM = {
   name: "General",
@@ -53,7 +71,7 @@ app.prepare().then(() => {
       res.end(
         JSON.stringify({
           ok: true,
-          users: users.size,
+          users: getUniquePresenceUsers().length,
           uptime: Math.round(process.uptime())
         })
       );
@@ -73,23 +91,68 @@ app.prepare().then(() => {
       socket.emit("chat:history", []);
     }
 
-    socket.on("user:join", (nickname: unknown, ack?: AckCallback) => {
-      const cleanName = normalizeNickname(nickname);
+    socket.on("user:join", async (payload: JoinPayload, ack?: AckCallback) => {
+      const email = normalizeEmail(payload?.email);
+      const userId = normalizeId(payload?.userId);
 
-      users.set(socket.id, cleanName);
+      if (!userId && !email) {
+        if (typeof ack === "function") {
+          ack({ ok: false, error: "Signed-in user is required." });
+        }
+        return;
+      }
+
+      const dbUser = await findJoinUser({ email, userId });
+
+      if (!dbUser) {
+        if (typeof ack === "function") {
+          ack({ ok: false, error: "Signed-in user was not found." });
+        }
+        return;
+      }
+
+      const cleanName = normalizeNickname(
+        payload?.nickname || dbUser.nickname || dbUser.name || dbUser.email
+      );
+
+      await prisma.user.update({
+        where: { id: dbUser.id },
+        data: { nickname: cleanName }
+      });
+
+      removeSocketFromPresence(socket.id);
+
+      const existingOnlineUser = onlineUsers.get(dbUser.id);
+      const wasAlreadyOnline = Boolean(existingOnlineUser);
+
+      if (existingOnlineUser) {
+        existingOnlineUser.nickname = cleanName;
+        existingOnlineUser.sockets.add(socket.id);
+      } else {
+        onlineUsers.set(dbUser.id, {
+          nickname: cleanName,
+          sockets: new Set([socket.id]),
+          userId: dbUser.id
+        });
+      }
+
+      socketUsers.set(socket.id, dbUser.id);
       socket.emit("user:ready", {
-        id: socket.id,
+        id: dbUser.id,
         nickname: cleanName
       });
 
       emitPresence(io);
-      const message: SystemMessage = {
-        id: createId(),
-        text: `${cleanName} joined the room.`,
-        createdAt: new Date().toISOString()
-      };
 
-      io.emit("system:message", message);
+      if (!wasAlreadyOnline) {
+        const message: SystemMessage = {
+          id: createId(),
+          text: `${cleanName} joined the room.`,
+          createdAt: new Date().toISOString()
+        };
+
+        socket.broadcast.emit("system:message", message);
+      }
 
       if (typeof ack === "function") {
         ack({ ok: true, nickname: cleanName });
@@ -97,10 +160,11 @@ app.prepare().then(() => {
     });
 
     socket.on("chat:message", async (payload: ChatPayload, ack?: AckCallback) => {
-      const nickname = users.get(socket.id);
+      const userId = socketUsers.get(socket.id);
+      const user = userId ? onlineUsers.get(userId) : null;
       const text = normalizeMessage(payload && payload.text);
 
-      if (!nickname || !text) {
+      if (!user || !text) {
         if (typeof ack === "function") {
           ack({ ok: false, error: "Message is empty or user has not joined." });
         }
@@ -109,8 +173,8 @@ app.prepare().then(() => {
 
       try {
         const message = await saveChatMessage({
-          socketId: socket.id,
-          nickname,
+          userId: user.userId,
+          nickname: user.nickname,
           text
         });
 
@@ -129,18 +193,19 @@ app.prepare().then(() => {
     });
 
     socket.on("disconnect", () => {
-      const nickname = users.get(socket.id);
-      users.delete(socket.id);
+      const user = removeSocketFromPresence(socket.id);
 
-      if (nickname) {
+      if (user) {
         emitPresence(io);
-        const message: SystemMessage = {
-          id: createId(),
-          text: `${nickname} left the room.`,
-          createdAt: new Date().toISOString()
-        };
+        if (user.sockets.size === 0) {
+          const message: SystemMessage = {
+            id: createId(),
+            text: `${user.nickname} left the room.`,
+            createdAt: new Date().toISOString()
+          };
 
-        io.emit("system:message", message);
+          io.emit("system:message", message);
+        }
       }
     });
   });
@@ -152,9 +217,40 @@ app.prepare().then(() => {
 
 function emitPresence(io: Server) {
   io.emit("presence:update", {
-    count: users.size,
-    users: Array.from(users.values()).sort((a, b) => a.localeCompare(b))
+    count: getUniquePresenceUsers().length,
+    users: getUniquePresenceUsers()
   });
+}
+
+function getUniquePresenceUsers() {
+  return Array.from(onlineUsers.values())
+    .map((user): PresenceUser => ({
+      id: user.userId,
+      nickname: user.nickname,
+      sockets: user.sockets.size
+    }))
+    .sort((a, b) => a.nickname.localeCompare(b.nickname));
+}
+
+function removeSocketFromPresence(socketId: string) {
+  const userId = socketUsers.get(socketId);
+
+  if (!userId) {
+    return null;
+  }
+
+  const user = onlineUsers.get(userId) || null;
+  socketUsers.delete(socketId);
+
+  if (user) {
+    user.sockets.delete(socketId);
+
+    if (user.sockets.size === 0) {
+      onlineUsers.delete(userId);
+    }
+  }
+
+  return user;
 }
 
 function normalizeNickname(value: unknown) {
@@ -164,6 +260,44 @@ function normalizeNickname(value: unknown) {
 
 function normalizeMessage(value: unknown) {
   return String(value || "").trim().slice(0, 500);
+}
+
+function normalizeEmail(value: unknown) {
+  const email = String(value || "").trim().toLowerCase();
+  return email.includes("@") ? email : null;
+}
+
+function normalizeId(value: unknown) {
+  return String(value || "").trim() || null;
+}
+
+function findJoinUser({ email, userId }: { email: string | null; userId: string | null }) {
+  if (userId) {
+    return prisma.user.findFirst({
+      where: {
+        OR: [
+          { id: userId },
+          ...(email ? [{ email }] : [])
+        ]
+      },
+      select: {
+        email: true,
+        id: true,
+        name: true,
+        nickname: true
+      }
+    });
+  }
+
+  return prisma.user.findUnique({
+    where: { email: email || "" },
+    select: {
+      email: true,
+      id: true,
+      name: true,
+      nickname: true
+    }
+  });
 }
 
 async function loadRecentMessages(): Promise<ChatMessage[]> {
@@ -184,11 +318,11 @@ async function loadRecentMessages(): Promise<ChatMessage[]> {
 }
 
 async function saveChatMessage({
-  socketId,
+  userId,
   nickname,
   text
 }: {
-  socketId: string;
+  userId: string;
   nickname: string;
   text: string;
 }): Promise<ChatMessage> {
@@ -196,6 +330,7 @@ async function saveChatMessage({
   const message = await prisma.message.create({
     data: {
       roomId,
+      userId,
       nickname,
       text
     }
@@ -203,7 +338,7 @@ async function saveChatMessage({
 
   return {
     id: message.id,
-    userId: socketId,
+    userId: message.userId || "",
     nickname: message.nickname,
     text: message.text,
     createdAt: message.createdAt.toISOString()

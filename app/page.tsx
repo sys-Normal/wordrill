@@ -1,14 +1,22 @@
 "use client";
 
 import type { FormEvent } from "react";
-import { useEffect, useMemo, useRef, useState } from "react";
+import { Fragment, useEffect, useMemo, useRef, useState } from "react";
+import Link from "next/link";
 import { signIn, signOut, useSession } from "next-auth/react";
 import type { Socket } from "socket.io-client";
 import { io } from "socket.io-client";
+import {
+  browserStorageKeys,
+  getSessionStorageItem,
+  removeSessionStorageItem,
+  setSessionStorageItem
+} from "../lib/browser-storage";
 
 type User = {
   id: string;
   nickname: string;
+  sockets?: number;
 };
 
 type ChatMessage = {
@@ -31,7 +39,7 @@ type Message =
 
 type Presence = {
   count: number;
-  users: string[];
+  users: User[];
 };
 
 type AckResult = {
@@ -51,8 +59,39 @@ export default function Home() {
   const [messages, setMessages] = useState<Message[]>([]);
   const [presence, setPresence] = useState<Presence>({ count: 0, users: [] });
   const [nicknameInitialized, setNicknameInitialized] = useState(false);
+  const [profileLoaded, setProfileLoaded] = useState(false);
+  const [profileUserId, setProfileUserId] = useState<string | null>(null);
+  const [loginIdentifier, setLoginIdentifier] = useState("");
+  const [loginPassword, setLoginPassword] = useState("");
+  const [loginError, setLoginError] = useState("");
+  const [joinError, setJoinError] = useState("");
+  const [socketConnected, setSocketConnected] = useState(false);
   const isAuthenticated = status === "authenticated";
   const sessionName = session?.user?.name || session?.user?.email || "";
+  const activeUserId = profileUserId || session?.user?.id || null;
+  const activeUserEmail = session?.user?.email || null;
+
+  const visiblePresence = useMemo<Presence>(() => {
+    const uniqueUsers = new Map<string, User>();
+
+    for (const user of presence.users) {
+      const current = uniqueUsers.get(user.id);
+
+      uniqueUsers.set(user.id, {
+        ...user,
+        sockets: (current?.sockets || 0) + (user.sockets || 1)
+      });
+    }
+
+    const users = Array.from(uniqueUsers.values()).sort((a, b) =>
+      a.nickname.localeCompare(b.nickname)
+    );
+
+    return {
+      count: users.length,
+      users
+    };
+  }, [presence]);
 
   const socket = useMemo<Socket | null>(() => {
     if (typeof window === "undefined") {
@@ -68,6 +107,15 @@ export default function Home() {
     }
 
     socketRef.current = socket;
+    socket.connect();
+
+    socket.on("connect", () => {
+      setSocketConnected(true);
+    });
+
+    socket.on("disconnect", () => {
+      setSocketConnected(false);
+    });
 
     socket.on("user:ready", (user: User) => {
       setCurrentUserId(user.id);
@@ -102,19 +150,126 @@ export default function Home() {
   }, [messages]);
 
   useEffect(() => {
-    if (!nicknameInitialized && sessionName) {
-      setNickname(sessionName.slice(0, 24));
-      setNicknameInitialized(true);
+    if (status !== "authenticated") {
+      return;
     }
-  }, [nicknameInitialized, sessionName]);
+
+    setProfileLoaded(false);
+    setJoinError("");
+    fetch("/api/profile")
+      .then((response) => response.json())
+      .then((data) => {
+        const nextUserId = data.user?.id || session?.user?.id || null;
+        const savedNickname = normalizeNickname(data.user?.nickname);
+        const storedNickname = normalizeNickname(
+          getSessionStorageItem(browserStorageKeys.session.chat.lastNickname)
+        );
+        const fallbackNickname = normalizeNickname(sessionName);
+        const nextNickname = savedNickname || storedNickname || fallbackNickname;
+
+        if (nextNickname) {
+          setNickname(nextNickname);
+          setNicknameInitialized(true);
+        }
+
+        setProfileUserId(nextUserId);
+      })
+      .catch(() => {
+        setProfileUserId(session?.user?.id || null);
+      })
+      .finally(() => setProfileLoaded(true));
+  }, [session?.user?.id, sessionName, status]);
+
+  useEffect(() => {
+    if (
+      !socket ||
+      !socketConnected ||
+      !isAuthenticated ||
+      !profileLoaded ||
+      joined ||
+      !nickname ||
+      (!activeUserId && !activeUserEmail)
+    ) {
+      return;
+    }
+
+    socket.emit("user:join", {
+      email: activeUserEmail,
+      nickname,
+      userId: activeUserId
+    }, (result: AckResult) => {
+      if (result?.ok) {
+        setSessionStorageItem(
+          browserStorageKeys.session.chat.lastNickname,
+          result.nickname || nickname
+        );
+        setJoinError("");
+        setJoined(true);
+      } else {
+        setJoinError(result?.error || "채팅방에 입장하지 못했습니다.");
+      }
+    });
+  }, [
+    activeUserEmail,
+    activeUserId,
+    isAuthenticated,
+    joined,
+    nickname,
+    profileLoaded,
+    socket,
+    socketConnected
+  ]);
 
   function joinRoom(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
-    socketRef.current?.emit("user:join", nickname, (result: AckResult) => {
+    setJoinError("");
+
+    if (!activeUserId && !activeUserEmail) {
+      setJoinError("로그인 정보를 다시 확인해주세요.");
+      return;
+    }
+
+    if (!socketRef.current?.connected) {
+      socketRef.current?.connect();
+      setJoinError("서버에 다시 연결하고 있습니다. 잠시 후 다시 시도해주세요.");
+      return;
+    }
+
+    socketRef.current?.emit("user:join", {
+      email: activeUserEmail,
+      nickname,
+      userId: activeUserId
+    }, (result: AckResult) => {
       if (result?.ok) {
+        setSessionStorageItem(
+          browserStorageKeys.session.chat.lastNickname,
+          result.nickname || nickname
+        );
         setJoined(true);
+      } else {
+        setJoinError(result?.error || "채팅방에 입장하지 못했습니다.");
       }
     });
+  }
+
+  function handleSignOut() {
+    removeSessionStorageItem(browserStorageKeys.session.chat.lastNickname);
+    signOut();
+  }
+
+  async function loginWithTestAccount(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    setLoginError("");
+
+    const result = await signIn("credentials", {
+      identifier: loginIdentifier,
+      password: loginPassword,
+      redirect: false
+    });
+
+    if (result?.error) {
+      setLoginError("로그인 정보를 확인해주세요.");
+    }
   }
 
   function sendMessage(event: FormEvent<HTMLFormElement>) {
@@ -142,13 +297,18 @@ export default function Home() {
           </div>
           <div className="headerActions">
             {isAuthenticated ? (
-              <button className="secondaryButton" type="button" onClick={() => signOut()}>
-                Logout
-              </button>
+              <>
+                <Link className="secondaryButton textButton" href="/settings">
+                  Settings
+                </Link>
+                <button className="secondaryButton" type="button" onClick={handleSignOut}>
+                  Logout
+                </button>
+              </>
             ) : null}
             <div className="statusPill" aria-live="polite">
               <span className="statusDot" />
-              <span>{presence.count} online</span>
+              <span>{visiblePresence.count} online</span>
             </div>
           </div>
         </header>
@@ -167,7 +327,29 @@ export default function Home() {
               <button type="button" onClick={() => signIn("google")}>
                 Continue with Google
               </button>
+              <div className="authDivider">or</div>
+              <form className="localLoginForm" onSubmit={loginWithTestAccount}>
+                <input
+                  autoComplete="username"
+                  placeholder="tester1 또는 tester1@wordrill.local"
+                  value={loginIdentifier}
+                  onChange={(event) => setLoginIdentifier(event.target.value)}
+                />
+                <input
+                  autoComplete="current-password"
+                  placeholder="password"
+                  type="password"
+                  value={loginPassword}
+                  onChange={(event) => setLoginPassword(event.target.value)}
+                />
+                <button type="submit">Login with test account</button>
+                {loginError ? <p className="authError">{loginError}</p> : null}
+              </form>
             </div>
+          </div>
+        ) : !profileLoaded ? (
+          <div className="authView">
+            <p className="authTitle">프로필을 불러오고 있습니다.</p>
           </div>
         ) : !joined ? (
           <div className="joinView">
@@ -187,6 +369,7 @@ export default function Home() {
                 />
                 <button type="submit">Join</button>
               </div>
+              {joinError ? <p className="authError">{joinError}</p> : null}
             </form>
           </div>
         ) : (
@@ -194,32 +377,51 @@ export default function Home() {
             <aside className="sidebar" aria-label="Online users">
               <p className="sidebarTitle">Online</p>
               <ul className="userList">
-                {presence.users.map((user) => (
-                  <li key={user}>{user}</li>
+                {visiblePresence.users.map((user) => (
+                  <li
+                    key={user.id}
+                    className={user.id === currentUserId ? "currentUser" : ""}
+                  >
+                    <span>{user.nickname}</span>
+                    {user.id === currentUserId ? <span className="youBadge">You</span> : null}
+                  </li>
                 ))}
               </ul>
             </aside>
 
             <section className="conversation" aria-label="Messages">
               <ol ref={messagesRef} className="messages" aria-live="polite">
-                {messages.map((message) =>
-                  message.type === "system" ? (
-                    <li key={message.id} className="message system">
-                      {message.text}
-                    </li>
-                  ) : (
-                    <li
-                      key={message.id}
-                      className={`message ${message.userId === currentUserId ? "mine" : ""}`}
-                    >
-                      <div className="messageMeta">
-                        <span className="messageAuthor">{message.nickname}</span>
-                        <time dateTime={message.createdAt}>{formatTime(message.createdAt)}</time>
-                      </div>
-                      <div className="messageText">{message.text}</div>
-                    </li>
-                  )
-                )}
+                {messages.map((message, index) => {
+                  const previousMessage = messages[index - 1];
+                  const showDateDivider =
+                    !previousMessage ||
+                    getDateKey(previousMessage.createdAt) !== getDateKey(message.createdAt);
+
+                  return (
+                    <Fragment key={message.id}>
+                      {showDateDivider ? (
+                        <li className="dateDivider">
+                          <time dateTime={getDateKey(message.createdAt)}>
+                            {formatDateDivider(message.createdAt)}
+                          </time>
+                        </li>
+                      ) : null}
+                      {message.type === "system" ? (
+                        <li className="message system">{message.text}</li>
+                      ) : (
+                        <li
+                          className={`message ${message.userId === currentUserId ? "mine" : ""}`}
+                        >
+                          <div className="messageMeta">
+                            <span className="messageAuthor">{message.nickname}</span>
+                            <time dateTime={message.createdAt}>{formatTime(message.createdAt)}</time>
+                          </div>
+                          <div className="messageText">{message.text}</div>
+                        </li>
+                      )}
+                    </Fragment>
+                  );
+                })}
               </ol>
 
               <form className="messageForm" onSubmit={sendMessage}>
@@ -245,4 +447,23 @@ function formatTime(value: string) {
     hour: "2-digit",
     minute: "2-digit"
   }).format(new Date(value));
+}
+
+function formatDateDivider(value: string) {
+  return new Intl.DateTimeFormat("ko-KR", {
+    dateStyle: "full"
+  }).format(new Date(value));
+}
+
+function getDateKey(value: string) {
+  const date = new Date(value);
+  const year = date.getFullYear();
+  const month = String(date.getMonth() + 1).padStart(2, "0");
+  const day = String(date.getDate()).padStart(2, "0");
+
+  return `${year}-${month}-${day}`;
+}
+
+function normalizeNickname(value: unknown) {
+  return String(value || "").trim().replace(/\s+/g, " ").slice(0, 24);
 }

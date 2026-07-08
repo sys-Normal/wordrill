@@ -9,6 +9,7 @@
     "dev": "tsx server.ts",
     "db:migrate": "node scripts/with-next-env.mjs prisma migrate dev",
     "db:generate": "node scripts/with-next-env.mjs prisma generate",
+    "db:seed": "node scripts/with-next-env.mjs tsx scripts/seed-test-users.ts",
     "build": "next build"
   },
   "dependencies": {

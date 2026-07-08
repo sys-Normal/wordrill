@@ -8,6 +8,7 @@
 npm install
 docker compose up -d
 npm run db:migrate
+npm run db:seed
 npm run dev
 ```
 
@@ -31,6 +32,15 @@ Google Cloud Console에서 OAuth 2.0 웹 클라이언트를 만들고 아래 주
 - Authorized redirect URIs: `http://localhost:3001/api/auth/callback/google`
 
 `.env.local.example`을 참고해 로컬 환경 변수 파일을 준비합니다. 실제 `.env.local`은 저장소에 커밋하지 않습니다.
+
+## 테스트 계정
+
+로컬 테스트용 계정 로그인은 아래 값으로 사용할 수 있습니다.
+
+- `tester1` 또는 `tester1@wordrill.local` / `wordrill1`
+- `tester2` 또는 `tester2@wordrill.local` / `wordrill2`
+
+테스트 계정은 `npm run db:seed`로 로컬 DB에 생성합니다. 비밀번호는 해시로 저장되며, production 환경에서는 seed가 실행되지 않습니다.
 
 ## 스크립트
 

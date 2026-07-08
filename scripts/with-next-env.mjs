@@ -13,10 +13,8 @@ if (!command) {
   process.exit(1);
 }
 
-const executable = command === "prisma" ? process.execPath : command;
-const commandArgs = command === "prisma"
-  ? [require.resolve("prisma/build/index.js"), ...args]
-  : args;
+const executable = ["prisma", "tsx"].includes(command) ? process.execPath : command;
+const commandArgs = getCommandArgs(command, args);
 
 const child = spawn(executable, commandArgs, {
   env: process.env,
@@ -31,3 +29,15 @@ child.on("exit", (code, signal) => {
 
   process.exit(code ?? 1);
 });
+
+function getCommandArgs(command, args) {
+  if (command === "prisma") {
+    return [require.resolve("prisma/build/index.js"), ...args];
+  }
+
+  if (command === "tsx") {
+    return [require.resolve("tsx/cli"), ...args];
+  }
+
+  return args;
+}
