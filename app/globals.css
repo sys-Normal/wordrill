@@ -573,6 +573,10 @@ h1 {
   background: var(--current-user-bg);
 }
 
+.userList li.offlineUser {
+  color: var(--muted);
+}
+
 .userProfile {
   min-width: 0;
   display: inline-flex;
@@ -594,11 +598,44 @@ h1 {
   font-weight: 900;
 }
 
+.offlineUser .userAvatar {
+  background: var(--system);
+  color: var(--muted);
+}
+
+.userDetails {
+  min-width: 0;
+  display: grid;
+  gap: 2px;
+}
+
 .userNickname {
   min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+.userStatus {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  color: var(--muted);
+  font-size: 0.72rem;
+  font-weight: 800;
+}
+
+.userStatusDot {
+  width: 7px;
+  height: 7px;
+  flex: 0 0 auto;
+  border-radius: 50%;
+  background: var(--online);
+}
+
+.offlineUser .userStatusDot {
+  background: var(--muted);
+  opacity: 0.55;
 }
 
 .youBadge {

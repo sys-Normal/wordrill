@@ -18,6 +18,7 @@ import AppMenu from "../../app-menu";
 type User = {
   id: string;
   nickname: string;
+  online?: boolean;
   sockets?: number;
 };
 
@@ -88,13 +89,18 @@ export default function RoomPage() {
 
       uniqueUsers.set(user.id, {
         ...user,
+        online: Boolean(user.online),
         sockets: (current?.sockets || 0) + (user.sockets || 1)
       });
     }
 
-    const users = Array.from(uniqueUsers.values()).sort((a, b) =>
-      a.nickname.localeCompare(b.nickname)
-    );
+    const users = Array.from(uniqueUsers.values()).sort((a, b) => {
+      if (Boolean(a.online) !== Boolean(b.online)) {
+        return a.online ? -1 : 1;
+      }
+
+      return a.nickname.localeCompare(b.nickname);
+    });
 
     return {
       count: users.length,
@@ -365,19 +371,27 @@ export default function RoomPage() {
           </div>
         ) : (
           <div className="roomView">
-            <aside className="sidebar" aria-label="Online users">
-              <p className="sidebarTitle">Online</p>
+            <aside className="sidebar" aria-label="Room members">
+              <p className="sidebarTitle">Members</p>
               <ul className="userList">
                 {visiblePresence.users.map((user) => (
                   <li
                     key={user.id}
-                    className={user.id === currentUserId ? "currentUser" : ""}
+                    className={`${user.id === currentUserId ? "currentUser" : ""} ${
+                      user.online ? "onlineUser" : "offlineUser"
+                    }`}
                   >
                     <span className="userProfile">
                       <span className="userAvatar" aria-hidden="true">
                         {getUserInitial(user.nickname)}
                       </span>
-                      <span className="userNickname">{user.nickname}</span>
+                      <span className="userDetails">
+                        <span className="userNickname">{user.nickname}</span>
+                        <span className="userStatus">
+                          <span className="userStatusDot" aria-hidden="true" />
+                          {user.online ? "Online" : "Offline"}
+                        </span>
+                      </span>
                     </span>
                     {user.id === currentUserId ? <span className="youBadge">You</span> : null}
                   </li>

@@ -33,6 +33,7 @@ type JoinPayload = {
 type PresenceUser = {
   id: string;
   nickname: string;
+  online: boolean;
   sockets: number;
 };
 
@@ -168,7 +169,7 @@ app.prepare().then(() => {
         nickname: cleanName
       });
 
-      emitPresence(io, room.id);
+      await emitPresence(io, room.id);
 
       try {
         socket.emit("chat:history", await loadRecentMessages(room.id));
@@ -238,7 +239,7 @@ app.prepare().then(() => {
       const result = removeSocketFromPresence(io, socket.id);
 
       if (result) {
-        emitPresence(io, result.roomId);
+        void emitPresence(io, result.roomId);
         if (result.user.sockets.size === 0) {
           const message: SystemMessage = {
             id: createId(),
@@ -257,10 +258,12 @@ app.prepare().then(() => {
   });
 });
 
-function emitPresence(io: Server, roomId: string) {
+async function emitPresence(io: Server, roomId: string) {
+  const users = await getRoomMembersWithPresence(roomId);
+
   io.to(roomId).emit("presence:update", {
-    count: getUniquePresenceUsers(roomId).length,
-    users: getUniquePresenceUsers(roomId)
+    count: users.filter((user) => user.online).length,
+    users
   });
 }
 
@@ -269,9 +272,48 @@ function getUniquePresenceUsers(roomId: string) {
     .map((user): PresenceUser => ({
       id: user.userId,
       nickname: user.nickname,
+      online: true,
       sockets: user.sockets.size
     }))
     .sort((a, b) => a.nickname.localeCompare(b.nickname));
+}
+
+async function getRoomMembersWithPresence(roomId: string) {
+  const onlineUsers = onlineRooms.get(roomId) || new Map<string, OnlineUser>();
+  const members = await prisma.roomMember.findMany({
+    where: { roomId },
+    orderBy: { createdAt: "asc" },
+    select: {
+      user: {
+        select: {
+          email: true,
+          id: true,
+          name: true,
+          nickname: true
+        }
+      }
+    }
+  });
+
+  return members
+    .map(({ user }): PresenceUser => {
+      const onlineUser = onlineUsers.get(user.id);
+      const nickname = onlineUser?.nickname || formatMemberNickname(user);
+
+      return {
+        id: user.id,
+        nickname,
+        online: Boolean(onlineUser),
+        sockets: onlineUser?.sockets.size || 0
+      };
+    })
+    .sort((a, b) => {
+      if (a.online !== b.online) {
+        return a.online ? -1 : 1;
+      }
+
+      return a.nickname.localeCompare(b.nickname);
+    });
 }
 
 function getTotalOnlineUsers() {
@@ -379,6 +421,17 @@ function findJoinUser({ email, userId }: { email: string | null; userId: string 
       nickname: true
     }
   });
+}
+
+function formatMemberNickname(user: {
+  email: string | null;
+  name: string | null;
+  nickname: string | null;
+}) {
+  return String(user.nickname || user.name || user.email || "Unknown user")
+    .trim()
+    .replace(/\s+/g, " ")
+    .slice(0, 24);
 }
 
 function findRoom(slug: string) {
