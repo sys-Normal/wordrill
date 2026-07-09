@@ -2,9 +2,12 @@
 
 import type { FormEvent } from "react";
 import { useEffect, useState } from "react";
-import Link from "next/link";
-import { useSession } from "next-auth/react";
-import ThemeToggle from "../theme-toggle";
+import { signOut, useSession } from "next-auth/react";
+import AppMenu from "../app-menu";
+import {
+  browserStorageKeys,
+  removeSessionStorageItem
+} from "../../lib/browser-storage";
 
 type Profile = {
   email?: string | null;
@@ -60,47 +63,49 @@ export default function SettingsPage() {
     }
   }
 
-  return (
-    <main className="settingsShell">
-      <section className="settingsPanel" aria-label="Settings">
-        <header className="settingsHeader">
-          <div>
-            <p className="eyebrow">Account settings</p>
-            <h1>Settings</h1>
-          </div>
-          <div className="headerActions">
-            <ThemeToggle />
-            <Link className="secondaryButton textButton" href="/">
-              Back to rooms
-            </Link>
-          </div>
-        </header>
+  function handleSignOut() {
+    removeSessionStorageItem(browserStorageKeys.session.chat.lastNickname);
+    signOut();
+  }
 
-        {status === "loading" ? (
-          <p className="settingsStatus">로그인 상태를 확인하고 있습니다.</p>
-        ) : status !== "authenticated" ? (
-          <p className="settingsStatus">로그인이 필요합니다.</p>
-        ) : (
-          <form className="settingsForm" onSubmit={saveNickname}>
-            <div>
-              <label htmlFor="nickname">Nickname</label>
-              <input
-                id="nickname"
-                maxLength={24}
-                required
-                value={nickname}
-                onChange={(event) => setNickname(event.target.value)}
-              />
-            </div>
-            <p className="settingsMeta">{profile?.email || profile?.name}</p>
-            <div className="settingsActions">
-              <button type="submit" disabled={saving}>
-                {saving ? "Saving" : "Save"}
-              </button>
-              {message ? <span className="settingsMessage">{message}</span> : null}
-            </div>
-          </form>
-        )}
+  return (
+    <main className="appShell">
+      <section className="chatPanel" aria-label="Settings">
+        <div className="appLayout">
+          <AppMenu
+            isAuthenticated={status === "authenticated"}
+            onSignOut={handleSignOut}
+          />
+          <div className="appMain settingsMain">
+            <h1 className="srOnly">Settings</h1>
+
+            {status === "loading" ? (
+              <p className="settingsStatus">로그인 상태를 확인하고 있습니다.</p>
+            ) : status !== "authenticated" ? (
+              <p className="settingsStatus">로그인이 필요합니다.</p>
+            ) : (
+              <form className="settingsForm" onSubmit={saveNickname}>
+                <div>
+                  <label htmlFor="nickname">Nickname</label>
+                  <input
+                    id="nickname"
+                    maxLength={24}
+                    required
+                    value={nickname}
+                    onChange={(event) => setNickname(event.target.value)}
+                  />
+                </div>
+                <p className="settingsMeta">{profile?.email || profile?.name}</p>
+                <div className="settingsActions">
+                  <button type="submit" disabled={saving}>
+                    {saving ? "Saving" : "Save"}
+                  </button>
+                  {message ? <span className="settingsMessage">{message}</span> : null}
+                </div>
+              </form>
+            )}
+          </div>
+        </div>
       </section>
     </main>
   );

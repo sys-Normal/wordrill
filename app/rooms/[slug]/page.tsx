@@ -13,7 +13,7 @@ import {
   removeSessionStorageItem,
   setSessionStorageItem
 } from "../../../lib/browser-storage";
-import ThemeToggle from "../../theme-toggle";
+import AppMenu from "../../app-menu";
 
 type User = {
   id: string;
@@ -294,34 +294,20 @@ export default function RoomPage() {
   return (
     <main className="appShell">
       <section className="chatPanel" aria-label="Chat room">
-        <header className="chatHeader">
-          <div>
-            <p className="eyebrow">Wordrill Chat</p>
-            <h1>{roomName || "Chat room"}</h1>
-          </div>
-          <div className="headerActions">
-            <ThemeToggle />
-            {isAuthenticated ? (
-              <>
-                <Link className="secondaryButton textButton" href="/">
-                  Rooms
-                </Link>
-                <Link className="secondaryButton textButton" href="/settings">
-                  Settings
-                </Link>
-                <button className="secondaryButton" type="button" onClick={handleSignOut}>
-                  Logout
-                </button>
-              </>
-            ) : null}
-            <div className="statusPill" aria-live="polite">
-              <span className="statusDot" />
-              <span>{visiblePresence.count} online</span>
-            </div>
-          </div>
-        </header>
+        <div className="appLayout">
+          <AppMenu isAuthenticated={isAuthenticated} onSignOut={handleSignOut} />
+          <div className="appMain">
+            <header className="chatHeader">
+              <h1 className="srOnly">{roomName || "Chat room"}</h1>
+              <div className="headerActions">
+                <div className="statusPill" aria-live="polite">
+                  <span className="statusDot" />
+                  <span>{visiblePresence.count} online</span>
+                </div>
+              </div>
+            </header>
 
-        {status === "loading" ? (
+            {status === "loading" ? (
           <div className="authView">
             <p className="authTitle">로그인 상태를 확인하고 있습니다.</p>
           </div>
@@ -441,7 +427,9 @@ export default function RoomPage() {
               </form>
             </section>
           </div>
-        )}
+            )}
+          </div>
+        </div>
       </section>
     </main>
   );

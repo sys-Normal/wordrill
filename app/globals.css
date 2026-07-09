@@ -123,29 +123,135 @@ input:focus {
 
 .appShell {
   min-height: 100vh;
-  display: grid;
-  place-items: center;
-  padding: 12px;
+  display: block;
+  padding: 0;
 }
 
 .chatPanel {
-  width: min(1280px, 100%);
-  min-height: calc(100vh - 24px);
+  width: 100%;
+  min-height: 100vh;
   display: flex;
   flex-direction: column;
   overflow: hidden;
-  border: 1px solid var(--line);
-  border-radius: 8px;
+  border: 0;
+  border-radius: 0;
   background: var(--panel);
-  box-shadow: 0 18px 44px var(--shadow);
+  box-shadow: none;
+}
+
+.appLayout {
+  flex: 1;
+  min-height: 100vh;
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+}
+
+.appMain {
+  min-width: 0;
+  min-height: 100vh;
+  display: flex;
+  flex-direction: column;
+  background: var(--panel);
+}
+
+.appMenu {
+  width: 56px;
+  min-height: 100vh;
+  overflow: hidden;
+  border-right: 1px solid var(--line);
+  background: var(--panel-muted);
+  transition: width 180ms ease;
+}
+
+.appMenu.menuOpen {
+  width: 260px;
+}
+
+.menuButton {
+  width: 40px;
+  min-height: 40px;
+  display: grid;
+  align-content: center;
+  gap: 5px;
+  margin: 10px 8px;
+  border: 1px solid var(--line);
+  background: var(--panel);
+  color: var(--ink);
+  padding: 0;
+}
+
+.menuButton:hover {
+  background: var(--hover);
+}
+
+.menuButton span {
+  width: 18px;
+  height: 2px;
+  justify-self: center;
+  border-radius: 999px;
+  background: currentColor;
+}
+
+.menuPanel {
+  width: 260px;
+  display: grid;
+  gap: 8px;
+  padding: 4px 8px 12px;
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 120ms ease;
+}
+
+.menuOpen .menuPanel {
+  opacity: 1;
+  pointer-events: auto;
+}
+
+.menuLink {
+  min-height: 40px;
+  display: flex;
+  align-items: center;
+  border: 1px solid transparent;
+  border-radius: 8px;
+  color: var(--ink);
+  padding: 0 12px;
+  text-decoration: none;
+  font-weight: 800;
+}
+
+.menuLink:hover,
+.menuLink.active {
+  border-color: var(--line);
+  background: var(--hover);
+}
+
+.menuAction {
+  width: 100%;
+  justify-content: flex-start;
+  background: transparent;
+  color: var(--ink);
+}
+
+.menuAction:hover {
+  background: var(--hover);
+}
+
+.srOnly {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
 }
 
 .chatHeader {
   display: flex;
   align-items: center;
-  justify-content: space-between;
+  justify-content: flex-end;
   gap: 12px;
-  padding: 14px 18px;
+  min-height: 56px;
+  padding: 8px 12px;
   border-bottom: 1px solid var(--line);
 }
 
@@ -316,7 +422,7 @@ h1 {
 }
 
 .roomsPanel {
-  min-height: calc(100vh - 24px);
+  min-height: 100vh;
 }
 
 .roomsView {
@@ -324,7 +430,7 @@ h1 {
   display: grid;
   align-content: start;
   gap: 12px;
-  padding: 14px;
+  padding: 12px;
 }
 
 .roomCreateForm {
@@ -570,6 +676,11 @@ h1 {
   min-height: 100vh;
   display: grid;
   place-items: center;
+  padding: 12px;
+}
+
+.settingsMain {
+  justify-content: flex-start;
   padding: 12px;
 }
 

@@ -9,7 +9,7 @@ import {
   browserStorageKeys,
   removeSessionStorageItem
 } from "../lib/browser-storage";
-import ThemeToggle from "./theme-toggle";
+import AppMenu from "./app-menu";
 
 type Room = {
   id: string;
@@ -107,27 +107,12 @@ export default function RoomsHome() {
   return (
     <main className="appShell">
       <section className="chatPanel roomsPanel" aria-label="My chat rooms">
-        <header className="chatHeader">
-          <div>
-            <p className="eyebrow">Wordrill Chat</p>
-            <h1>My rooms</h1>
-          </div>
-          <div className="headerActions">
-            <ThemeToggle />
-            {isAuthenticated ? (
-              <>
-              <Link className="secondaryButton textButton" href="/settings">
-                Settings
-              </Link>
-              <button className="secondaryButton" type="button" onClick={handleSignOut}>
-                Logout
-              </button>
-              </>
-            ) : null}
-          </div>
-        </header>
+        <div className="appLayout">
+          <AppMenu isAuthenticated={isAuthenticated} onSignOut={handleSignOut} />
+          <div className="appMain">
+            <h1 className="srOnly">My rooms</h1>
 
-        {status === "loading" ? (
+            {status === "loading" ? (
           <div className="authView">
             <p className="authTitle">로그인 상태를 확인하고 있습니다.</p>
           </div>
@@ -204,7 +189,9 @@ export default function RoomsHome() {
               </ul>
             )}
           </div>
-        )}
+            )}
+          </div>
+        </div>
       </section>
     </main>
   );
