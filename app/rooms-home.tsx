@@ -13,6 +13,11 @@ import ThemeToggle from "./theme-toggle";
 
 type Room = {
   id: string;
+  lastMessage: {
+    createdAt: string;
+    nickname: string;
+    text: string;
+  } | null;
   messageCount: number;
   name: string;
   slug: string;
@@ -179,11 +184,20 @@ export default function RoomsHome() {
                 {rooms.map((room) => (
                   <li key={room.id}>
                     <Link className="roomLink" href={`/rooms/${room.slug}`}>
-                      <span>
-                        <strong>{room.name}</strong>
-                        <small>{room.messageCount} messages</small>
+                      <span className="roomAvatar" aria-hidden="true">
+                        {getRoomInitial(room.name)}
                       </span>
-                      <span className="roomArrow">Enter</span>
+                      <span className="roomSummary">
+                        <span className="roomTopLine">
+                          <strong>{room.name}</strong>
+                          <time dateTime={room.lastMessage?.createdAt || room.updatedAt}>
+                            {formatRoomTime(room.lastMessage?.createdAt || room.updatedAt)}
+                          </time>
+                        </span>
+                        <span className="roomLastMessage">
+                          {formatLastMessage(room)}
+                        </span>
+                      </span>
                     </Link>
                   </li>
                 ))}
@@ -194,4 +208,34 @@ export default function RoomsHome() {
       </section>
     </main>
   );
+}
+
+function getRoomInitial(name: string) {
+  return name.trim().charAt(0).toUpperCase() || "#";
+}
+
+function formatLastMessage(room: Room) {
+  if (!room.lastMessage) {
+    return "아직 메시지가 없습니다.";
+  }
+
+  return `${room.lastMessage.nickname}: ${room.lastMessage.text}`;
+}
+
+function formatRoomTime(value: string) {
+  const date = new Date(value);
+  const now = new Date();
+  const isToday = date.toDateString() === now.toDateString();
+
+  if (isToday) {
+    return new Intl.DateTimeFormat("ko-KR", {
+      hour: "2-digit",
+      minute: "2-digit"
+    }).format(date);
+  }
+
+  return new Intl.DateTimeFormat("ko-KR", {
+    month: "2-digit",
+    day: "2-digit"
+  }).format(date);
 }

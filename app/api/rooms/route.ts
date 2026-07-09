@@ -28,6 +28,15 @@ export async function GET() {
           name: true,
           slug: true,
           updatedAt: true,
+          messages: {
+            orderBy: { createdAt: "desc" },
+            select: {
+              createdAt: true,
+              nickname: true,
+              text: true
+            },
+            take: 1
+          },
           _count: {
             select: { messages: true }
           }
@@ -37,13 +46,7 @@ export async function GET() {
   });
 
   return NextResponse.json({
-    rooms: memberships.map(({ room }) => ({
-      id: room.id,
-      messageCount: room._count.messages,
-      name: room.name,
-      slug: room.slug,
-      updatedAt: room.updatedAt.toISOString()
-    }))
+    rooms: memberships.map(({ room }) => serializeRoom(room))
   });
 }
 
@@ -81,12 +84,47 @@ export async function POST(request: Request) {
   return NextResponse.json({
     room: {
       id: room.id,
+      lastMessage: null,
       messageCount: 0,
       name: room.name,
       slug: room.slug,
       updatedAt: room.updatedAt.toISOString()
     }
   }, { status: 201 });
+}
+
+type RoomWithSummary = {
+  id: string;
+  name: string;
+  slug: string;
+  updatedAt: Date;
+  messages: Array<{
+    createdAt: Date;
+    nickname: string;
+    text: string;
+  }>;
+  _count: {
+    messages: number;
+  };
+};
+
+function serializeRoom(room: RoomWithSummary) {
+  const lastMessage = room.messages[0] || null;
+
+  return {
+    id: room.id,
+    lastMessage: lastMessage
+      ? {
+          createdAt: lastMessage.createdAt.toISOString(),
+          nickname: lastMessage.nickname,
+          text: lastMessage.text
+        }
+      : null,
+    messageCount: room._count.messages,
+    name: room.name,
+    slug: room.slug,
+    updatedAt: room.updatedAt.toISOString()
+  };
 }
 
 async function ensureDefaultRoomMembership(userId: string) {
