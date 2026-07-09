@@ -373,7 +373,12 @@ export default function RoomPage() {
                     key={user.id}
                     className={user.id === currentUserId ? "currentUser" : ""}
                   >
-                    <span>{user.nickname}</span>
+                    <span className="userProfile">
+                      <span className="userAvatar" aria-hidden="true">
+                        {getUserInitial(user.nickname)}
+                      </span>
+                      <span className="userNickname">{user.nickname}</span>
+                    </span>
                     {user.id === currentUserId ? <span className="youBadge">You</span> : null}
                   </li>
                 ))}
@@ -459,4 +464,8 @@ function getDateKey(value: string) {
 
 function normalizeNickname(value: unknown) {
   return String(value || "").trim().replace(/\s+/g, " ").slice(0, 24);
+}
+
+function getUserInitial(nickname: string) {
+  return nickname.trim().charAt(0).toUpperCase() || "?";
 }
