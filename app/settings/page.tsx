@@ -4,6 +4,7 @@ import type { FormEvent } from "react";
 import { useEffect, useState } from "react";
 import Link from "next/link";
 import { useSession } from "next-auth/react";
+import ThemeToggle from "../theme-toggle";
 
 type Profile = {
   email?: string | null;
@@ -67,9 +68,12 @@ export default function SettingsPage() {
             <p className="eyebrow">Account settings</p>
             <h1>Settings</h1>
           </div>
-          <Link className="textButton" href="/">
-            Back to rooms
-          </Link>
+          <div className="headerActions">
+            <ThemeToggle />
+            <Link className="secondaryButton textButton" href="/">
+              Back to rooms
+            </Link>
+          </div>
         </header>
 
         {status === "loading" ? (

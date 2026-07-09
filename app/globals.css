@@ -3,19 +3,48 @@
   font-family:
     Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI",
     sans-serif;
-  --bg: #f8fafd;
+  --bg: #f6f4fb;
   --panel: #ffffff;
-  --ink: #202124;
-  --muted: #5f6368;
-  --line: #dadce0;
-  --accent: #1a73e8;
-  --accent-strong: #1558b0;
-  --sent: #e8f0fe;
+  --panel-muted: #fbfaff;
+  --ink: #211d2b;
+  --muted: #6a6275;
+  --line: #ded7e8;
+  --accent: #6d3fd1;
+  --accent-strong: #5630a8;
+  --accent-soft: #efe8ff;
+  --sent: #efe8ff;
   --received: #ffffff;
-  --system: #f1f3f4;
-  --focus: rgba(26, 115, 232, 0.18);
-  --danger: #d93025;
-  --online: #34a853;
+  --system: #f2eef7;
+  --focus: rgba(109, 63, 209, 0.2);
+  --danger: #c8352b;
+  --online: #159b73;
+  --shadow: rgba(50, 38, 71, 0.14);
+  --hover: #f7f3ff;
+  --current-user-bg: #f1eaff;
+  --current-user-border: #cdb8ff;
+}
+
+:root[data-theme="dark"] {
+  color-scheme: dark;
+  --bg: #14111b;
+  --panel: #1d1926;
+  --panel-muted: #221d2d;
+  --ink: #f5f0ff;
+  --muted: #b7aec7;
+  --line: #3a314b;
+  --accent: #a78bfa;
+  --accent-strong: #c4b5fd;
+  --accent-soft: #312447;
+  --sent: #3a2959;
+  --received: #261f33;
+  --system: #282233;
+  --focus: rgba(167, 139, 250, 0.28);
+  --danger: #ff8a80;
+  --online: #5ee0b8;
+  --shadow: rgba(0, 0, 0, 0.34);
+  --hover: #2a2337;
+  --current-user-bg: #33264d;
+  --current-user-border: #755eb3;
 }
 
 * {
@@ -35,14 +64,14 @@ input {
 }
 
 button {
-  min-height: 44px;
+  min-height: 40px;
   border: 0;
   border-radius: 8px;
   background: var(--accent);
   color: white;
   cursor: pointer;
   font-weight: 700;
-  padding: 0 18px;
+  padding: 0 14px;
 }
 
 button:hover {
@@ -56,21 +85,21 @@ button:disabled {
 
 .secondaryButton {
   border: 1px solid var(--line);
-  background: white;
+  background: var(--panel);
   color: var(--ink);
 }
 
 .secondaryButton:hover {
-  background: #f8fafd;
+  background: var(--hover);
 }
 
 .textButton {
-  min-height: 44px;
+  min-height: 40px;
   display: inline-flex;
   align-items: center;
   justify-content: center;
   border-radius: 8px;
-  padding: 0 18px;
+  padding: 0 14px;
   text-decoration: none;
   font-weight: 700;
 }
@@ -78,13 +107,13 @@ button:disabled {
 input {
   min-width: 0;
   width: 100%;
-  min-height: 44px;
+  min-height: 40px;
   border: 1px solid var(--line);
   border-radius: 8px;
-  background: white;
+  background: var(--panel);
   color: var(--ink);
   outline: none;
-  padding: 0 14px;
+  padding: 0 12px;
 }
 
 input:focus {
@@ -96,34 +125,35 @@ input:focus {
   min-height: 100vh;
   display: grid;
   place-items: center;
-  padding: 24px;
+  padding: 12px;
 }
 
 .chatPanel {
-  width: min(1040px, 100%);
-  min-height: min(760px, calc(100vh - 48px));
+  width: min(1280px, 100%);
+  min-height: calc(100vh - 24px);
   display: flex;
   flex-direction: column;
   overflow: hidden;
   border: 1px solid var(--line);
   border-radius: 8px;
   background: var(--panel);
-  box-shadow: 0 18px 48px rgba(60, 64, 67, 0.14);
+  box-shadow: 0 18px 44px var(--shadow);
 }
 
 .chatHeader {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  gap: 16px;
-  padding: 20px 24px;
+  gap: 12px;
+  padding: 14px 18px;
   border-bottom: 1px solid var(--line);
 }
 
 .headerActions {
   display: inline-flex;
   align-items: center;
-  gap: 10px;
+  gap: 8px;
+  flex-wrap: wrap;
 }
 
 .eyebrow {
@@ -136,7 +166,7 @@ input:focus {
 
 h1 {
   margin: 0;
-  font-size: clamp(1.45rem, 3vw, 2rem);
+  font-size: 1.45rem;
   letter-spacing: 0;
 }
 
@@ -144,13 +174,51 @@ h1 {
   display: inline-flex;
   align-items: center;
   gap: 8px;
-  min-height: 34px;
-  padding: 0 12px;
+  min-height: 32px;
+  padding: 0 10px;
   border: 1px solid var(--line);
   border-radius: 999px;
   color: var(--muted);
   font-size: 0.9rem;
   white-space: nowrap;
+}
+
+.themeToggle {
+  min-height: 40px;
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  border: 1px solid var(--line);
+  background: var(--panel);
+  color: var(--ink);
+  padding: 0 10px;
+}
+
+.themeToggle:hover {
+  background: var(--hover);
+}
+
+.themeToggleTrack {
+  width: 34px;
+  height: 18px;
+  display: inline-flex;
+  align-items: center;
+  border-radius: 999px;
+  background: var(--line);
+  padding: 2px;
+}
+
+.themeToggleThumb {
+  width: 14px;
+  height: 14px;
+  border-radius: 50%;
+  background: var(--accent);
+  transform: translateX(0);
+  transition: transform 160ms ease;
+}
+
+.themeToggle[aria-pressed="true"] .themeToggleThumb {
+  transform: translateX(16px);
 }
 
 .statusDot {
@@ -164,14 +232,14 @@ h1 {
   flex: 1;
   display: grid;
   place-items: center;
-  padding: 24px;
+  padding: 16px;
 }
 
 .authView {
   flex: 1;
   display: grid;
   place-items: center;
-  padding: 24px;
+  padding: 16px;
   text-align: center;
 }
 
@@ -248,15 +316,15 @@ h1 {
 }
 
 .roomsPanel {
-  min-height: min(680px, calc(100vh - 48px));
+  min-height: calc(100vh - 24px);
 }
 
 .roomsView {
   flex: 1;
   display: grid;
   align-content: start;
-  gap: 16px;
-  padding: 24px;
+  gap: 12px;
+  padding: 14px;
 }
 
 .roomCreateForm {
@@ -280,22 +348,22 @@ h1 {
 }
 
 .roomLink {
-  min-height: 74px;
+  min-height: 64px;
   display: flex;
   align-items: center;
   justify-content: space-between;
   gap: 16px;
   border: 1px solid var(--line);
   border-radius: 8px;
-  background: white;
+  background: var(--panel);
   color: var(--ink);
-  padding: 14px 16px;
+  padding: 12px 14px;
   text-decoration: none;
 }
 
 .roomLink:hover {
-  border-color: #aecbfa;
-  background: #f8fafd;
+  border-color: var(--current-user-border);
+  background: var(--hover);
 }
 
 .roomLink strong,
@@ -323,13 +391,13 @@ h1 {
   flex: 1;
   min-height: 0;
   display: grid;
-  grid-template-columns: minmax(180px, 240px) 1fr;
+  grid-template-columns: minmax(170px, 220px) 1fr;
 }
 
 .sidebar {
   border-right: 1px solid var(--line);
-  padding: 18px;
-  background: rgba(255, 255, 255, 0.45);
+  padding: 12px;
+  background: var(--panel-muted);
 }
 
 .sidebarTitle {
@@ -355,14 +423,14 @@ h1 {
   gap: 8px;
   overflow-wrap: anywhere;
   border-radius: 8px;
-  background: white;
-  padding: 10px 12px;
+  background: var(--panel);
+  padding: 9px 10px;
   font-weight: 700;
 }
 
 .userList li.currentUser {
-  border: 1px solid #aecbfa;
-  background: #e8f0fe;
+  border: 1px solid var(--current-user-border);
+  background: var(--current-user-bg);
 }
 
 .youBadge {
@@ -388,9 +456,9 @@ h1 {
   overflow-y: auto;
   display: flex;
   flex-direction: column;
-  gap: 10px;
+  gap: 8px;
   margin: 0;
-  padding: 18px;
+  padding: 12px;
   list-style: none;
 }
 
@@ -401,7 +469,7 @@ h1 {
   border: 1px solid var(--line);
   border-radius: 8px;
   background: var(--received);
-  padding: 10px 12px;
+  padding: 9px 11px;
 }
 
 .dateDivider {
@@ -460,7 +528,7 @@ h1 {
 
 .messageForm {
   border-top: 1px solid var(--line);
-  padding: 14px;
+  padding: 10px;
   background: var(--panel);
 }
 
@@ -468,7 +536,7 @@ h1 {
   min-height: 100vh;
   display: grid;
   place-items: center;
-  padding: 24px;
+  padding: 12px;
 }
 
 .settingsPanel {
@@ -476,22 +544,22 @@ h1 {
   border: 1px solid var(--line);
   border-radius: 8px;
   background: var(--panel);
-  box-shadow: 0 18px 48px rgba(60, 64, 67, 0.14);
+  box-shadow: 0 18px 44px var(--shadow);
 }
 
 .settingsHeader {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  gap: 16px;
-  padding: 20px 24px;
+  gap: 12px;
+  padding: 14px 18px;
   border-bottom: 1px solid var(--line);
 }
 
 .settingsForm {
   display: grid;
-  gap: 14px;
-  padding: 24px;
+  gap: 12px;
+  padding: 16px;
 }
 
 .settingsForm label {
@@ -541,7 +609,7 @@ h1 {
 
   .headerActions {
     width: 100%;
-    justify-content: space-between;
+    justify-content: flex-start;
   }
 
   .roomView {

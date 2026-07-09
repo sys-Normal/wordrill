@@ -9,6 +9,7 @@ import {
   browserStorageKeys,
   removeSessionStorageItem
 } from "../lib/browser-storage";
+import ThemeToggle from "./theme-toggle";
 
 type Room = {
   id: string;
@@ -106,16 +107,19 @@ export default function RoomsHome() {
             <p className="eyebrow">Wordrill Chat</p>
             <h1>My rooms</h1>
           </div>
-          {isAuthenticated ? (
-            <div className="headerActions">
+          <div className="headerActions">
+            <ThemeToggle />
+            {isAuthenticated ? (
+              <>
               <Link className="secondaryButton textButton" href="/settings">
                 Settings
               </Link>
               <button className="secondaryButton" type="button" onClick={handleSignOut}>
                 Logout
               </button>
-            </div>
-          ) : null}
+              </>
+            ) : null}
+          </div>
         </header>
 
         {status === "loading" ? (

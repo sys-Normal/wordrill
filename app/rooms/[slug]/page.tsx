@@ -13,6 +13,7 @@ import {
   removeSessionStorageItem,
   setSessionStorageItem
 } from "../../../lib/browser-storage";
+import ThemeToggle from "../../theme-toggle";
 
 type User = {
   id: string;
@@ -299,6 +300,7 @@ export default function RoomPage() {
             <h1>{roomName || "Chat room"}</h1>
           </div>
           <div className="headerActions">
+            <ThemeToggle />
             {isAuthenticated ? (
               <>
                 <Link className="secondaryButton textButton" href="/">
@@ -401,7 +403,7 @@ export default function RoomPage() {
                     getDateKey(previousMessage.createdAt) !== getDateKey(message.createdAt);
 
                   return (
-                    <Fragment key={message.id}>
+                    <Fragment key={`${message.type}-${message.id}-${index}`}>
                       {showDateDivider ? (
                         <li className="dateDivider">
                           <time dateTime={getDateKey(message.createdAt)}>

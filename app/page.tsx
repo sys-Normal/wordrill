@@ -401,7 +401,7 @@ function LegacyHome() {
                     getDateKey(previousMessage.createdAt) !== getDateKey(message.createdAt);
 
                   return (
-                    <Fragment key={message.id}>
+                    <Fragment key={`${message.type}-${message.id}-${index}`}>
                       {showDateDivider ? (
                         <li className="dateDivider">
                           <time dateTime={getDateKey(message.createdAt)}>
