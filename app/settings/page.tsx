@@ -68,7 +68,7 @@ export default function SettingsPage() {
             <h1>Settings</h1>
           </div>
           <Link className="textButton" href="/">
-            Back to chat
+            Back to rooms
           </Link>
         </header>
 

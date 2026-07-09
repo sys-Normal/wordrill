@@ -19,12 +19,14 @@ type SystemMessage = {
 };
 
 type ChatPayload = {
+  roomSlug?: string;
   text?: string;
 };
 
 type JoinPayload = {
   email?: string;
   nickname?: string;
+  roomSlug?: string;
   userId?: string;
 };
 
@@ -40,10 +42,20 @@ type OnlineUser = {
   userId: string;
 };
 
+type SocketSession = {
+  roomId: string;
+  userId: string;
+};
+
 type AckResult = {
   ok: boolean;
   error?: string;
   nickname?: string;
+  room?: {
+    id: string;
+    name: string;
+    slug: string;
+  };
 };
 
 type AckCallback = (result: AckResult) => void;
@@ -55,8 +67,8 @@ const app = next({ dev });
 const handle = app.getRequestHandler();
 const PORT = Number(process.env.PORT || 3001);
 
-const socketUsers = new Map<string, string>();
-const onlineUsers = new Map<string, OnlineUser>();
+const socketSessions = new Map<string, SocketSession>();
+const onlineRooms = new Map<string, Map<string, OnlineUser>>();
 const MAX_HISTORY = 50;
 const DEFAULT_ROOM = {
   name: "General",
@@ -71,7 +83,8 @@ app.prepare().then(() => {
       res.end(
         JSON.stringify({
           ok: true,
-          users: getUniquePresenceUsers().length,
+          rooms: onlineRooms.size,
+          users: getTotalOnlineUsers(),
           uptime: Math.round(process.uptime())
         })
       );
@@ -84,15 +97,9 @@ app.prepare().then(() => {
   const io = new Server(server);
 
   io.on("connection", async (socket: Socket) => {
-    try {
-      socket.emit("chat:history", await loadRecentMessages());
-    } catch (error) {
-      console.error("Failed to load chat history", error);
-      socket.emit("chat:history", []);
-    }
-
     socket.on("user:join", async (payload: JoinPayload, ack?: AckCallback) => {
       const email = normalizeEmail(payload?.email);
+      const roomSlug = normalizeSlug(payload?.roomSlug) || DEFAULT_ROOM.slug;
       const userId = normalizeId(payload?.userId);
 
       if (!userId && !email) {
@@ -103,10 +110,18 @@ app.prepare().then(() => {
       }
 
       const dbUser = await findJoinUser({ email, userId });
+      const room = await findRoom(roomSlug);
 
       if (!dbUser) {
         if (typeof ack === "function") {
           ack({ ok: false, error: "Signed-in user was not found." });
+        }
+        return;
+      }
+
+      if (!room) {
+        if (typeof ack === "function") {
+          ack({ ok: false, error: "Chat room was not found." });
         }
         return;
       }
@@ -120,29 +135,47 @@ app.prepare().then(() => {
         data: { nickname: cleanName }
       });
 
-      removeSocketFromPresence(socket.id);
+      await ensureRoomMembership({
+        roomId: room.id,
+        userId: dbUser.id
+      });
 
-      const existingOnlineUser = onlineUsers.get(dbUser.id);
+      removeSocketFromPresence(io, socket.id);
+
+      socket.join(room.id);
+
+      const roomUsers = getRoomPresence(room.id);
+      const existingOnlineUser = roomUsers.get(dbUser.id);
       const wasAlreadyOnline = Boolean(existingOnlineUser);
 
       if (existingOnlineUser) {
         existingOnlineUser.nickname = cleanName;
         existingOnlineUser.sockets.add(socket.id);
       } else {
-        onlineUsers.set(dbUser.id, {
+        roomUsers.set(dbUser.id, {
           nickname: cleanName,
           sockets: new Set([socket.id]),
           userId: dbUser.id
         });
       }
 
-      socketUsers.set(socket.id, dbUser.id);
+      socketSessions.set(socket.id, {
+        roomId: room.id,
+        userId: dbUser.id
+      });
       socket.emit("user:ready", {
         id: dbUser.id,
         nickname: cleanName
       });
 
-      emitPresence(io);
+      emitPresence(io, room.id);
+
+      try {
+        socket.emit("chat:history", await loadRecentMessages(room.id));
+      } catch (error) {
+        console.error("Failed to load chat history", error);
+        socket.emit("chat:history", []);
+      }
 
       if (!wasAlreadyOnline) {
         const message: SystemMessage = {
@@ -151,20 +184,28 @@ app.prepare().then(() => {
           createdAt: new Date().toISOString()
         };
 
-        socket.broadcast.emit("system:message", message);
+        socket.to(room.id).emit("system:message", message);
       }
 
       if (typeof ack === "function") {
-        ack({ ok: true, nickname: cleanName });
+        ack({
+          ok: true,
+          nickname: cleanName,
+          room: {
+            id: room.id,
+            name: room.name,
+            slug: room.slug
+          }
+        });
       }
     });
 
     socket.on("chat:message", async (payload: ChatPayload, ack?: AckCallback) => {
-      const userId = socketUsers.get(socket.id);
-      const user = userId ? onlineUsers.get(userId) : null;
+      const session = socketSessions.get(socket.id);
+      const user = session ? getRoomPresence(session.roomId).get(session.userId) : null;
       const text = normalizeMessage(payload && payload.text);
 
-      if (!user || !text) {
+      if (!session || !user || !text) {
         if (typeof ack === "function") {
           ack({ ok: false, error: "Message is empty or user has not joined." });
         }
@@ -173,12 +214,13 @@ app.prepare().then(() => {
 
       try {
         const message = await saveChatMessage({
+          roomId: session.roomId,
           userId: user.userId,
           nickname: user.nickname,
           text
         });
 
-        io.emit("chat:message", message);
+        io.to(session.roomId).emit("chat:message", message);
 
         if (typeof ack === "function") {
           ack({ ok: true });
@@ -193,18 +235,18 @@ app.prepare().then(() => {
     });
 
     socket.on("disconnect", () => {
-      const user = removeSocketFromPresence(socket.id);
+      const result = removeSocketFromPresence(io, socket.id);
 
-      if (user) {
-        emitPresence(io);
-        if (user.sockets.size === 0) {
+      if (result) {
+        emitPresence(io, result.roomId);
+        if (result.user.sockets.size === 0) {
           const message: SystemMessage = {
             id: createId(),
-            text: `${user.nickname} left the room.`,
+            text: `${result.user.nickname} left the room.`,
             createdAt: new Date().toISOString()
           };
 
-          io.emit("system:message", message);
+          socket.to(result.roomId).emit("system:message", message);
         }
       }
     });
@@ -215,15 +257,15 @@ app.prepare().then(() => {
   });
 });
 
-function emitPresence(io: Server) {
-  io.emit("presence:update", {
-    count: getUniquePresenceUsers().length,
-    users: getUniquePresenceUsers()
+function emitPresence(io: Server, roomId: string) {
+  io.to(roomId).emit("presence:update", {
+    count: getUniquePresenceUsers(roomId).length,
+    users: getUniquePresenceUsers(roomId)
   });
 }
 
-function getUniquePresenceUsers() {
-  return Array.from(onlineUsers.values())
+function getUniquePresenceUsers(roomId: string) {
+  return Array.from(getRoomPresence(roomId).values())
     .map((user): PresenceUser => ({
       id: user.userId,
       nickname: user.nickname,
@@ -232,25 +274,59 @@ function getUniquePresenceUsers() {
     .sort((a, b) => a.nickname.localeCompare(b.nickname));
 }
 
-function removeSocketFromPresence(socketId: string) {
-  const userId = socketUsers.get(socketId);
+function getTotalOnlineUsers() {
+  const userIds = new Set<string>();
 
-  if (!userId) {
+  for (const roomUsers of onlineRooms.values()) {
+    for (const userId of roomUsers.keys()) {
+      userIds.add(userId);
+    }
+  }
+
+  return userIds.size;
+}
+
+function getRoomPresence(roomId: string) {
+  let roomUsers = onlineRooms.get(roomId);
+
+  if (!roomUsers) {
+    roomUsers = new Map<string, OnlineUser>();
+    onlineRooms.set(roomId, roomUsers);
+  }
+
+  return roomUsers;
+}
+
+function removeSocketFromPresence(io: Server, socketId: string) {
+  const session = socketSessions.get(socketId);
+
+  if (!session) {
     return null;
   }
 
-  const user = onlineUsers.get(userId) || null;
-  socketUsers.delete(socketId);
+  const roomUsers = getRoomPresence(session.roomId);
+  const user = roomUsers.get(session.userId) || null;
+  socketSessions.delete(socketId);
+  io.sockets.sockets.get(socketId)?.leave(session.roomId);
 
   if (user) {
     user.sockets.delete(socketId);
 
     if (user.sockets.size === 0) {
-      onlineUsers.delete(userId);
+      roomUsers.delete(session.userId);
+    }
+
+    if (roomUsers.size === 0) {
+      onlineRooms.delete(session.roomId);
     }
   }
 
-  return user;
+  return user
+    ? {
+        roomId: session.roomId,
+        user
+      }
+    : null;
 }
 
 function normalizeNickname(value: unknown) {
@@ -269,6 +345,11 @@ function normalizeEmail(value: unknown) {
 
 function normalizeId(value: unknown) {
   return String(value || "").trim() || null;
+}
+
+function normalizeSlug(value: unknown) {
+  const slug = String(value || "").trim().toLowerCase();
+  return slug.replace(/[^a-z0-9-]/g, "") || null;
 }
 
 function findJoinUser({ email, userId }: { email: string | null; userId: string | null }) {
@@ -300,8 +381,34 @@ function findJoinUser({ email, userId }: { email: string | null; userId: string 
   });
 }
 
-async function loadRecentMessages(): Promise<ChatMessage[]> {
-  const roomId = await getDefaultRoomId();
+function findRoom(slug: string) {
+  return prisma.room.findUnique({
+    where: { slug },
+    select: {
+      id: true,
+      name: true,
+      slug: true
+    }
+  });
+}
+
+function ensureRoomMembership({ roomId, userId }: { roomId: string; userId: string }) {
+  return prisma.roomMember.upsert({
+    where: {
+      userId_roomId: {
+        roomId,
+        userId
+      }
+    },
+    update: {},
+    create: {
+      roomId,
+      userId
+    }
+  });
+}
+
+async function loadRecentMessages(roomId: string): Promise<ChatMessage[]> {
   const rows = await prisma.message.findMany({
     where: { roomId },
     orderBy: { createdAt: "desc" },
@@ -318,15 +425,16 @@ async function loadRecentMessages(): Promise<ChatMessage[]> {
 }
 
 async function saveChatMessage({
+  roomId,
   userId,
   nickname,
   text
 }: {
+  roomId: string;
   userId: string;
   nickname: string;
   text: string;
 }): Promise<ChatMessage> {
-  const roomId = await getDefaultRoomId();
   const message = await prisma.message.create({
     data: {
       roomId,

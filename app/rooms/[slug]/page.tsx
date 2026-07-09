@@ -4,6 +4,7 @@ import type { FormEvent } from "react";
 import { Fragment, useEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
 import { signIn, signOut, useSession } from "next-auth/react";
+import { useParams } from "next/navigation";
 import type { Socket } from "socket.io-client";
 import { io } from "socket.io-client";
 import {
@@ -11,10 +12,7 @@ import {
   getSessionStorageItem,
   removeSessionStorageItem,
   setSessionStorageItem
-} from "../lib/browser-storage";
-import RoomsHome from "./rooms-home";
-
-export default RoomsHome;
+} from "../../../lib/browser-storage";
 
 type User = {
   id: string;
@@ -49,19 +47,26 @@ type AckResult = {
   ok: boolean;
   error?: string;
   nickname?: string;
+  room?: {
+    id: string;
+    name: string;
+    slug: string;
+  };
 };
 
-function LegacyHome() {
+export default function RoomPage() {
+  const params = useParams<{ slug: string }>();
+  const roomSlug = String(params.slug || "");
   const { data: session, status } = useSession();
   const socketRef = useRef<Socket | null>(null);
   const messagesRef = useRef<HTMLOListElement | null>(null);
+  const [roomName, setRoomName] = useState("");
   const [nickname, setNickname] = useState("");
   const [draft, setDraft] = useState("");
   const [currentUserId, setCurrentUserId] = useState<string | null>(null);
   const [joined, setJoined] = useState(false);
   const [messages, setMessages] = useState<Message[]>([]);
   const [presence, setPresence] = useState<Presence>({ count: 0, users: [] });
-  const [nicknameInitialized, setNicknameInitialized] = useState(false);
   const [profileLoaded, setProfileLoaded] = useState(false);
   const [profileUserId, setProfileUserId] = useState<string | null>(null);
   const [loginIdentifier, setLoginIdentifier] = useState("");
@@ -118,6 +123,8 @@ function LegacyHome() {
 
     socket.on("disconnect", () => {
       setSocketConnected(false);
+      setJoined(false);
+      setPresence({ count: 0, users: [] });
     });
 
     socket.on("user:ready", (user: User) => {
@@ -172,7 +179,6 @@ function LegacyHome() {
 
         if (nextNickname) {
           setNickname(nextNickname);
-          setNicknameInitialized(true);
         }
 
         setProfileUserId(nextUserId);
@@ -191,27 +197,13 @@ function LegacyHome() {
       !profileLoaded ||
       joined ||
       !nickname ||
+      !roomSlug ||
       (!activeUserId && !activeUserEmail)
     ) {
       return;
     }
 
-    socket.emit("user:join", {
-      email: activeUserEmail,
-      nickname,
-      userId: activeUserId
-    }, (result: AckResult) => {
-      if (result?.ok) {
-        setSessionStorageItem(
-          browserStorageKeys.session.chat.lastNickname,
-          result.nickname || nickname
-        );
-        setJoinError("");
-        setJoined(true);
-      } else {
-        setJoinError(result?.error || "채팅방에 입장하지 못했습니다.");
-      }
-    });
+    joinSocketRoom();
   }, [
     activeUserEmail,
     activeUserId,
@@ -219,9 +211,31 @@ function LegacyHome() {
     joined,
     nickname,
     profileLoaded,
+    roomSlug,
     socket,
     socketConnected
   ]);
+
+  function joinSocketRoom() {
+    socketRef.current?.emit("user:join", {
+      email: activeUserEmail,
+      nickname,
+      roomSlug,
+      userId: activeUserId
+    }, (result: AckResult) => {
+      if (result?.ok) {
+        setSessionStorageItem(
+          browserStorageKeys.session.chat.lastNickname,
+          result.nickname || nickname
+        );
+        setRoomName(result.room?.name || roomSlug);
+        setJoinError("");
+        setJoined(true);
+      } else {
+        setJoinError(result?.error || "채팅방에 입장하지 못했습니다.");
+      }
+    });
+  }
 
   function joinRoom(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -238,21 +252,7 @@ function LegacyHome() {
       return;
     }
 
-    socketRef.current?.emit("user:join", {
-      email: activeUserEmail,
-      nickname,
-      userId: activeUserId
-    }, (result: AckResult) => {
-      if (result?.ok) {
-        setSessionStorageItem(
-          browserStorageKeys.session.chat.lastNickname,
-          result.nickname || nickname
-        );
-        setJoined(true);
-      } else {
-        setJoinError(result?.error || "채팅방에 입장하지 못했습니다.");
-      }
-    });
+    joinSocketRoom();
   }
 
   function handleSignOut() {
@@ -283,7 +283,7 @@ function LegacyHome() {
       return;
     }
 
-    socketRef.current?.emit("chat:message", { text }, (result: AckResult) => {
+    socketRef.current?.emit("chat:message", { roomSlug, text }, (result: AckResult) => {
       if (result?.ok) {
         setDraft("");
       }
@@ -295,12 +295,15 @@ function LegacyHome() {
       <section className="chatPanel" aria-label="Chat room">
         <header className="chatHeader">
           <div>
-            <p className="eyebrow">Next.js local test room</p>
-            <h1>Wordrill Chat</h1>
+            <p className="eyebrow">Wordrill Chat</p>
+            <h1>{roomName || "Chat room"}</h1>
           </div>
           <div className="headerActions">
             {isAuthenticated ? (
               <>
+                <Link className="secondaryButton textButton" href="/">
+                  Rooms
+                </Link>
                 <Link className="secondaryButton textButton" href="/settings">
                   Settings
                 </Link>
@@ -365,10 +368,7 @@ function LegacyHome() {
                   autoComplete="nickname"
                   placeholder="e.g. kww"
                   value={nickname}
-                  onChange={(event) => {
-                    setNicknameInitialized(true);
-                    setNickname(event.target.value);
-                  }}
+                  onChange={(event) => setNickname(event.target.value)}
                 />
                 <button type="submit">Join</button>
               </div>

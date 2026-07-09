@@ -247,6 +247,78 @@ h1 {
   gap: 10px;
 }
 
+.roomsPanel {
+  min-height: min(680px, calc(100vh - 48px));
+}
+
+.roomsView {
+  flex: 1;
+  display: grid;
+  align-content: start;
+  gap: 16px;
+  padding: 24px;
+}
+
+.roomCreateForm {
+  display: grid;
+  grid-template-columns: 1fr auto;
+  gap: 10px;
+}
+
+.roomsStatus {
+  margin: 0;
+  color: var(--muted);
+  font-weight: 700;
+}
+
+.roomList {
+  display: grid;
+  gap: 10px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.roomLink {
+  min-height: 74px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: white;
+  color: var(--ink);
+  padding: 14px 16px;
+  text-decoration: none;
+}
+
+.roomLink:hover {
+  border-color: #aecbfa;
+  background: #f8fafd;
+}
+
+.roomLink strong,
+.roomLink small {
+  display: block;
+}
+
+.roomLink strong {
+  font-size: 1rem;
+}
+
+.roomLink small {
+  margin-top: 4px;
+  color: var(--muted);
+  font-size: 0.82rem;
+}
+
+.roomArrow {
+  flex: 0 0 auto;
+  color: var(--accent);
+  font-weight: 800;
+}
+
 .roomView {
   flex: 1;
   min-height: 0;
@@ -494,5 +566,9 @@ h1 {
 
   .message {
     max-width: 92%;
+  }
+
+  .roomCreateForm {
+    grid-template-columns: 1fr;
   }
 }
