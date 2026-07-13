@@ -5,6 +5,7 @@ import { useEffect, useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { signIn, signOut, useSession } from "next-auth/react";
+import { Home } from "lucide-react";
 import {
   browserStorageKeys,
   removeSessionStorageItem
@@ -24,7 +25,11 @@ type Room = {
   updatedAt: string;
 };
 
-export default function RoomsHome() {
+type RoomsHomeProps = {
+  screen: "login" | "rooms";
+};
+
+export default function RoomsHome({ screen }: RoomsHomeProps) {
   const router = useRouter();
   const { status } = useSession();
   const [rooms, setRooms] = useState<Room[]>([]);
@@ -38,7 +43,19 @@ export default function RoomsHome() {
   const isAuthenticated = status === "authenticated";
 
   useEffect(() => {
-    if (!isAuthenticated) {
+    if (status === "loading") {
+      return;
+    }
+
+    if (screen === "login" && isAuthenticated) {
+      router.replace("/rooms");
+    } else if (screen === "rooms" && !isAuthenticated) {
+      router.replace("/login");
+    }
+  }, [isAuthenticated, router, screen, status]);
+
+  useEffect(() => {
+    if (!isAuthenticated || screen !== "rooms") {
       return;
     }
 
@@ -56,7 +73,7 @@ export default function RoomsHome() {
       .then((data) => setRooms(data.rooms || []))
       .catch(() => setRoomError("채팅방 목록을 불러오지 못했습니다."))
       .finally(() => setLoadingRooms(false));
-  }, [isAuthenticated]);
+  }, [isAuthenticated, screen]);
 
   async function createRoom(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -96,6 +113,8 @@ export default function RoomsHome() {
 
     if (result?.error) {
       setLoginError("로그인 정보를 확인해주세요.");
+    } else {
+      router.replace("/rooms");
     }
   }
 
@@ -110,20 +129,28 @@ export default function RoomsHome() {
         <div className="appLayout">
           <AppMenu isAuthenticated={isAuthenticated} onSignOut={handleSignOut} />
           <div className="appMain">
+            <Link
+              aria-label="홈으로"
+              className="loginBackButton secondaryButton textButton"
+              href="/"
+              title="홈으로"
+            >
+              <Home aria-hidden="true" size={20} />
+            </Link>
             <h1 className="srOnly">My rooms</h1>
 
-            {status === "loading" ? (
+            {status === "loading" || (screen === "login" && isAuthenticated) || (screen === "rooms" && !isAuthenticated) ? (
           <div className="authView">
             <p className="authTitle">로그인 상태를 확인하고 있습니다.</p>
           </div>
-        ) : !isAuthenticated ? (
+        ) : screen === "login" ? (
           <div className="authView">
             <div className="authContent">
               <p className="authTitle">Google 계정으로 로그인하세요.</p>
               <p className="authDescription">
                 로그인 후 내가 속한 채팅방을 확인할 수 있습니다.
               </p>
-              <button type="button" onClick={() => signIn("google")}>
+              <button type="button" onClick={() => signIn("google", { redirectTo: "/rooms" })}>
                 Continue with Google
               </button>
               <div className="authDivider">or</div>

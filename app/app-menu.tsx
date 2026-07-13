@@ -32,7 +32,7 @@ export default function AppMenu({ isAuthenticated, onSignOut }: AppMenuProps) {
         <ThemeToggle />
         {isAuthenticated ? (
           <>
-            <Link className={`menuLink ${pathname === "/" ? "active" : ""}`} href="/">
+            <Link className={`menuLink ${pathname === "/rooms" ? "active" : ""}`} href="/rooms">
               Rooms
             </Link>
             <Link
