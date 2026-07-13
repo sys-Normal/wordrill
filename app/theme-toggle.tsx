@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import { Moon, Sun } from "lucide-react";
 import {
   browserStorageKeys,
   getLocalStorageItem,
@@ -41,10 +42,15 @@ export default function ThemeToggle() {
       type="button"
       onClick={toggleTheme}
     >
-      <span className="themeToggleTrack">
-        <span className="themeToggleThumb" />
+      <span className="themeToggleTrack" aria-hidden="true">
+        <span className="themeToggleThumb">
+          {theme === "dark" ? (
+            <Moon className="themeToggleIcon" size={15} strokeWidth={2.5} />
+          ) : (
+            <Sun className="themeToggleIcon" size={15} strokeWidth={2.5} />
+          )}
+        </span>
       </span>
-      <span>{theme === "dark" ? "Dark" : "Light"}</span>
     </button>
   );
 }
