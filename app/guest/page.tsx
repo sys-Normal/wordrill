@@ -2,7 +2,8 @@
 
 import { useEffect, useState } from "react";
 import Link from "next/link";
-import ThemeToggle from "../theme-toggle";
+import { Home } from "lucide-react";
+import AppMenu from "../app-menu";
 
 const GUEST_AUTH_ID_KEY = "wordrill.guest.auth-id";
 
@@ -24,35 +25,48 @@ export default function GuestPage() {
   }, []);
 
   return (
-    <main className="guestPrototypeShell">
-      <header className="guestPrototypeHeader">
-        <Link className="secondaryButton textButton" href="/">돌아가기</Link>
-        <div>
-          <p className="entryEyebrow">Guest Preview</p>
-          <h1>공개 채팅방</h1>
-        </div>
-        <ThemeToggle />
-        <span className="guestIdentity">{guestAuthId || "guest 발급 중"}</span>
-      </header>
-      <section className="guestPrototypeContent" aria-label="Guest public rooms">
-        <div className="guestNotice">
-          <strong>게스트 체험 모드</strong>
-          <span>임시 Auth ID가 발급되었습니다. 아래 방은 UI 프로토타입이며 실제 입장은 다음 단계에서 연결됩니다.</span>
-        </div>
-        <div className="guestRoomGrid">
-          {rooms.map((room) => (
-            <article className="guestRoomCard" key={room.id}>
-              <span className="roomAvatar" aria-hidden="true">{room.name.trim().charAt(0).toUpperCase() || "#"}</span>
-              <div className="guestRoomInfo">
-                <div className="guestRoomTitleLine">
-                  <h2>{room.name}</h2>
-                  <span>{room.people}명 접속 중</span>
-                </div>
-                <p>{room.description}</p>
-                <button type="button" disabled>곧 입장 가능</button>
+    <main className="appShell">
+      <section className="chatPanel roomsPanel" aria-label="Guest public rooms">
+        <div className="appLayout">
+          <AppMenu isAuthenticated={false} />
+          <div className="appMain">
+            <Link
+              aria-label="홈으로"
+              className="loginBackButton secondaryButton textButton"
+              href="/"
+              title="홈으로"
+            >
+              <Home aria-hidden="true" size={20} />
+            </Link>
+            <h1 className="srOnly">공개 채팅방</h1>
+            <div className="roomsView">
+              <div className="guestNotice">
+                <span className="guestNoticeTopLine">
+                  <strong>게스트 체험 모드</strong>
+                  <span className="guestIdentity">{guestAuthId || "guest 발급 중"}</span>
+                </span>
+                <span>아래 공개 채팅방은 UI 프로토타입이며 실제 입장은 다음 단계에서 연결됩니다.</span>
               </div>
-            </article>
-          ))}
+              <ul className="roomList">
+                {rooms.map((room) => (
+                  <li key={room.id}>
+                    <div className="roomLink guestRoomLink">
+                      <span className="roomAvatar" aria-hidden="true">
+                        {room.name.trim().charAt(0).toUpperCase() || "#"}
+                      </span>
+                      <span className="roomSummary">
+                        <span className="roomTopLine">
+                          <strong>{room.name}</strong>
+                          <span className="guestRoomPeople">{room.people}명 접속 중</span>
+                        </span>
+                        <span className="roomLastMessage">{room.description}</span>
+                      </span>
+                    </div>
+                  </li>
+                ))}
+              </ul>
+            </div>
+          </div>
         </div>
       </section>
     </main>
