@@ -1,3 +1,13 @@
+import { redirect } from "next/navigation";
+import { auth } from "../auth";
 import EntryHome from "./entry-home";
 
-export default EntryHome;
+export default async function HomePage() {
+  const session = await auth();
+
+  if (session?.user) {
+    redirect("/rooms");
+  }
+
+  return <EntryHome />;
+}

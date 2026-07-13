@@ -113,7 +113,7 @@ export default function RoomPage() {
       return null;
     }
 
-    return io();
+    return io({ autoConnect: false });
   }, []);
 
   useEffect(() => {
@@ -121,41 +121,62 @@ export default function RoomPage() {
       return;
     }
 
-    socketRef.current = socket;
-    socket.connect();
-
-    socket.on("connect", () => {
+    const handleConnect = () => {
       setSocketConnected(true);
-    });
+    };
 
-    socket.on("disconnect", () => {
+    const handleDisconnect = () => {
       setSocketConnected(false);
       setJoined(false);
       setPresence({ count: 0, users: [] });
-    });
+    };
 
-    socket.on("user:ready", (user: User) => {
+    const handleUserReady = (user: User) => {
       setCurrentUserId(user.id);
-    });
+    };
 
-    socket.on("chat:history", (history: ChatMessage[]) => {
+    const handleChatHistory = (history: ChatMessage[]) => {
       setMessages(history.map((message) => ({ type: "chat", ...message })));
-    });
+    };
 
-    socket.on("chat:message", (message: ChatMessage) => {
-      setMessages((current) => [...current, { type: "chat", ...message }]);
-    });
+    const handleChatMessage = (message: ChatMessage) => {
+      setMessages((current) => {
+        if (current.some((item) => item.type === "chat" && item.id === message.id)) {
+          return current;
+        }
 
-    socket.on("system:message", (message: SystemMessage) => {
+        return [...current, { type: "chat", ...message }];
+      });
+    };
+
+    const handleSystemMessage = (message: SystemMessage) => {
       setMessages((current) => [...current, { type: "system", ...message }]);
-    });
+    };
 
-    socket.on("presence:update", (nextPresence: Presence) => {
+    const handlePresenceUpdate = (nextPresence: Presence) => {
       setPresence(nextPresence);
-    });
+    };
+
+    socketRef.current = socket;
+    socket.on("connect", handleConnect);
+    socket.on("disconnect", handleDisconnect);
+    socket.on("user:ready", handleUserReady);
+    socket.on("chat:history", handleChatHistory);
+    socket.on("chat:message", handleChatMessage);
+    socket.on("system:message", handleSystemMessage);
+    socket.on("presence:update", handlePresenceUpdate);
+    socket.connect();
 
     return () => {
+      socket.off("connect", handleConnect);
+      socket.off("disconnect", handleDisconnect);
+      socket.off("user:ready", handleUserReady);
+      socket.off("chat:history", handleChatHistory);
+      socket.off("chat:message", handleChatMessage);
+      socket.off("system:message", handleSystemMessage);
+      socket.off("presence:update", handlePresenceUpdate);
       socket.disconnect();
+      socketRef.current = null;
     };
   }, [socket]);
 
@@ -262,9 +283,9 @@ export default function RoomPage() {
     joinSocketRoom();
   }
 
-  function handleSignOut() {
+  async function handleSignOut() {
     removeSessionStorageItem(browserStorageKeys.session.chat.lastNickname);
-    signOut();
+    await signOut({ redirectTo: "/" });
   }
 
   async function loginWithTestAccount(event: FormEvent<HTMLFormElement>) {

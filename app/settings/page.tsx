@@ -63,9 +63,15 @@ export default function SettingsPage() {
     }
   }
 
-  function handleSignOut() {
+  async function handleSignOut() {
     removeSessionStorageItem(browserStorageKeys.session.chat.lastNickname);
-    signOut();
+    setMessage("");
+
+    try {
+      await signOut({ redirectTo: "/" });
+    } catch {
+      setMessage("로그아웃하지 못했습니다. 다시 시도해주세요.");
+    }
   }
 
   return (

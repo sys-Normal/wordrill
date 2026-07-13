@@ -50,7 +50,7 @@ export default function RoomsHome({ screen }: RoomsHomeProps) {
     if (screen === "login" && isAuthenticated) {
       router.replace("/rooms");
     } else if (screen === "rooms" && !isAuthenticated) {
-      router.replace("/login");
+      router.replace("/");
     }
   }, [isAuthenticated, router, screen, status]);
 
@@ -118,9 +118,9 @@ export default function RoomsHome({ screen }: RoomsHomeProps) {
     }
   }
 
-  function handleSignOut() {
+  async function handleSignOut() {
     removeSessionStorageItem(browserStorageKeys.session.chat.lastNickname);
-    signOut();
+    await signOut({ redirectTo: "/" });
   }
 
   return (
