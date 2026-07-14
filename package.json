@@ -10,6 +10,7 @@
     "db:migrate": "node scripts/with-next-env.mjs prisma migrate dev",
     "db:generate": "node scripts/with-next-env.mjs prisma generate",
     "db:seed": "node scripts/with-next-env.mjs tsx scripts/seed-test-users.ts",
+    "test:rooms-realtime": "node scripts/verify-room-list-realtime.mjs",
     "build": "next build"
   },
   "dependencies": {

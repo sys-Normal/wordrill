@@ -2,6 +2,12 @@ import http from "node:http";
 import { loadEnvConfig } from "@next/env";
 import next from "next";
 import { prisma } from "./lib/prisma";
+import {
+  emitRoomListUpdate,
+  getRoomListChannel,
+  setRoomListSocketServer
+} from "./lib/room-list-events";
+import { verifySocketTicket } from "./lib/socket-ticket";
 import { Server, type Socket } from "socket.io";
 
 type ChatMessage = {
@@ -10,24 +16,42 @@ type ChatMessage = {
   nickname: string;
   text: string;
   createdAt: string;
-};
-
-type SystemMessage = {
-  id: string;
-  text: string;
-  createdAt: string;
+  unreadCount: number;
 };
 
 type ChatPayload = {
-  roomSlug?: string;
+  roomId?: string;
   text?: string;
+};
+
+type ChatHistoryPayload = {
+  lastReadAt: string | null;
+  messages: ChatMessage[];
 };
 
 type JoinPayload = {
   email?: string;
   nickname?: string;
-  roomSlug?: string;
+  roomId?: string;
   userId?: string;
+};
+
+type OnlineSubscribePayload = {
+  email?: string;
+  userId?: string;
+};
+
+type RoomsSubscribePayload = {
+  ticket?: string;
+};
+
+type ReadPayload = {
+  messageId?: string;
+};
+
+type ReadCountUpdate = {
+  id: string;
+  unreadCount: number;
 };
 
 type PresenceUser = {
@@ -70,13 +94,10 @@ const PORT = Number(process.env.PORT || 3001);
 
 const socketSessions = new Map<string, SocketSession>();
 const onlineRooms = new Map<string, Map<string, OnlineUser>>();
+const onlineUsers = new Map<string, OnlineUser>();
+const onlineUserSessions = new Map<string, string>();
+const ONLINE_USERS_CHANNEL = "online-users";
 const MAX_HISTORY = 50;
-const DEFAULT_ROOM = {
-  name: "General",
-  slug: "general"
-};
-let defaultRoomIdPromise: Promise<string> | null = null;
-
 app.prepare().then(() => {
   const server = http.createServer((req, res) => {
     if (req.url === "/health") {
@@ -96,22 +117,96 @@ app.prepare().then(() => {
   });
 
   const io = new Server(server);
+  setRoomListSocketServer(io);
 
   io.on("connection", async (socket: Socket) => {
+    socket.on(
+      "users:subscribe",
+      async (payload: OnlineSubscribePayload, ack?: AckCallback) => {
+        const email = normalizeEmail(payload?.email);
+        const userId = normalizeId(payload?.userId);
+
+        if (!userId && !email) {
+          if (typeof ack === "function") {
+            ack({ ok: false, error: "Signed-in user is required." });
+          }
+          return;
+        }
+
+        const dbUser = await findJoinUser({ email, userId });
+
+        if (!dbUser) {
+          if (typeof ack === "function") {
+            ack({ ok: false, error: "Signed-in user was not found." });
+          }
+          return;
+        }
+
+        const nickname = formatMemberNickname(dbUser);
+        registerOnlineUser(socket.id, dbUser.id, nickname);
+        socket.join(ONLINE_USERS_CHANNEL);
+        emitOnlineUsers(io);
+
+        if (typeof ack === "function") {
+          ack({ ok: true, nickname });
+        }
+      }
+    );
+
+    socket.on(
+      "rooms:subscribe",
+      async (payload: RoomsSubscribePayload, ack?: AckCallback) => {
+        try {
+          const ticket = verifySocketTicket(payload?.ticket);
+
+          if (!ticket) {
+            if (typeof ack === "function") {
+              ack({ ok: false, error: "Room list subscription is unauthorized." });
+            }
+            return;
+          }
+
+          const user = await prisma.user.findUnique({
+            where: { id: ticket.sub },
+            select: { id: true }
+          });
+
+          if (!user) {
+            if (typeof ack === "function") {
+              ack({ ok: false, error: "Signed-in user was not found." });
+            }
+            return;
+          }
+
+          socket.join(getRoomListChannel(user.id));
+
+          if (typeof ack === "function") {
+            ack({ ok: true });
+          }
+        } catch (error) {
+          console.error("Failed to subscribe to room list updates", error);
+
+          if (typeof ack === "function") {
+            ack({ ok: false, error: "Room list subscription failed." });
+          }
+        }
+      }
+    );
+
     socket.on("user:join", async (payload: JoinPayload, ack?: AckCallback) => {
       const email = normalizeEmail(payload?.email);
-      const roomSlug = normalizeSlug(payload?.roomSlug) || DEFAULT_ROOM.slug;
+      const roomId = normalizeId(payload?.roomId);
       const userId = normalizeId(payload?.userId);
 
-      if (!userId && !email) {
+      if ((!userId && !email) || !roomId) {
         if (typeof ack === "function") {
-          ack({ ok: false, error: "Signed-in user is required." });
+          ack({ ok: false, error: "Signed-in user and room are required." });
         }
         return;
       }
 
       const dbUser = await findJoinUser({ email, userId });
-      const room = await findRoom(roomSlug);
+      const room = await findRoom(roomId);
 
       if (!dbUser) {
         if (typeof ack === "function") {
@@ -127,6 +222,18 @@ app.prepare().then(() => {
         return;
       }
 
+      const membership = await findRoomMembership({
+        roomId: room.id,
+        userId: dbUser.id
+      });
+
+      if (!membership) {
+        if (typeof ack === "function") {
+          ack({ ok: false, error: "Join the chat room before connecting." });
+        }
+        return;
+      }
+
       const cleanName = normalizeNickname(
         payload?.nickname || dbUser.nickname || dbUser.name || dbUser.email
       );
@@ -136,10 +243,8 @@ app.prepare().then(() => {
         data: { nickname: cleanName }
       });
 
-      await ensureRoomMembership({
-        roomId: room.id,
-        userId: dbUser.id
-      });
+      registerOnlineUser(socket.id, dbUser.id, cleanName);
+      emitOnlineUsers(io);
 
       removeSocketFromPresence(io, socket.id);
 
@@ -147,8 +252,6 @@ app.prepare().then(() => {
 
       const roomUsers = getRoomPresence(room.id);
       const existingOnlineUser = roomUsers.get(dbUser.id);
-      const wasAlreadyOnline = Boolean(existingOnlineUser);
-
       if (existingOnlineUser) {
         existingOnlineUser.nickname = cleanName;
         existingOnlineUser.sockets.add(socket.id);
@@ -170,22 +273,19 @@ app.prepare().then(() => {
       });
 
       await emitPresence(io, room.id);
+      void emitRoomListUpdate(room.id, io).catch((error) => {
+        console.error("Failed to update room list after joining", error);
+      });
 
       try {
-        socket.emit("chat:history", await loadRecentMessages(room.id));
+        const history: ChatHistoryPayload = {
+          lastReadAt: membership.lastReadAt?.toISOString() || null,
+          messages: await loadRecentMessages(room.id)
+        };
+        socket.emit("chat:history", history);
       } catch (error) {
         console.error("Failed to load chat history", error);
-        socket.emit("chat:history", []);
-      }
-
-      if (!wasAlreadyOnline) {
-        const message: SystemMessage = {
-          id: createId(),
-          text: `${cleanName} joined the room.`,
-          createdAt: new Date().toISOString()
-        };
-
-        socket.to(room.id).emit("system:message", message);
+        socket.emit("chat:history", { lastReadAt: null, messages: [] });
       }
 
       if (typeof ack === "function") {
@@ -222,6 +322,9 @@ app.prepare().then(() => {
         });
 
         io.to(session.roomId).emit("chat:message", message);
+        void emitRoomListUpdate(session.roomId, io).catch((error) => {
+          console.error("Failed to update room list after message", error);
+        });
 
         if (typeof ack === "function") {
           ack({ ok: true });
@@ -235,20 +338,77 @@ app.prepare().then(() => {
       }
     });
 
+    socket.on("message:read", async (payload: ReadPayload, ack?: AckCallback) => {
+      const session = socketSessions.get(socket.id);
+      const messageId = normalizeId(payload?.messageId);
+
+      if (!session || !messageId) {
+        if (typeof ack === "function") {
+          ack({ ok: false, error: "Message and joined room are required." });
+        }
+        return;
+      }
+
+      const message = await prisma.message.findFirst({
+        where: {
+          id: messageId,
+          roomId: session.roomId
+        },
+        select: { createdAt: true }
+      });
+
+      if (!message) {
+        if (typeof ack === "function") {
+          ack({ ok: false, error: "Message was not found in this room." });
+        }
+        return;
+      }
+
+      try {
+        const result = await prisma.roomMember.updateMany({
+          where: {
+            roomId: session.roomId,
+            userId: session.userId,
+            OR: [
+              { lastReadAt: null },
+              { lastReadAt: { lt: message.createdAt } }
+            ]
+          },
+          data: { lastReadAt: message.createdAt }
+        });
+
+        if (result.count > 0) {
+          io.to(session.roomId).emit(
+            "message:read:update",
+            await loadUnreadCountUpdates(session.roomId)
+          );
+          void emitRoomListUpdate(session.roomId, io).catch((error) => {
+            console.error("Failed to update room unread count", error);
+          });
+        }
+
+        if (typeof ack === "function") {
+          ack({ ok: true });
+        }
+      } catch (error) {
+        console.error("Failed to update message read state", error);
+
+        if (typeof ack === "function") {
+          ack({ ok: false, error: "Read state could not be updated." });
+        }
+      }
+    });
+
     socket.on("disconnect", () => {
       const result = removeSocketFromPresence(io, socket.id);
+      const onlineUserRemoved = removeOnlineUserSocket(socket.id);
 
       if (result) {
         void emitPresence(io, result.roomId);
-        if (result.user.sockets.size === 0) {
-          const message: SystemMessage = {
-            id: createId(),
-            text: `${result.user.nickname} left the room.`,
-            createdAt: new Date().toISOString()
-          };
+      }
 
-          socket.to(result.roomId).emit("system:message", message);
-        }
+      if (onlineUserRemoved) {
+        emitOnlineUsers(io);
       }
     });
   });
@@ -317,15 +477,66 @@ async function getRoomMembersWithPresence(roomId: string) {
 }
 
 function getTotalOnlineUsers() {
-  const userIds = new Set<string>();
+  return onlineUsers.size;
+}
 
-  for (const roomUsers of onlineRooms.values()) {
-    for (const userId of roomUsers.keys()) {
-      userIds.add(userId);
+function emitOnlineUsers(io: Server) {
+  const users = Array.from(onlineUsers.values())
+    .map((user) => ({
+      id: user.userId,
+      nickname: user.nickname,
+      sockets: user.sockets.size
+    }))
+    .sort((a, b) => a.nickname.localeCompare(b.nickname));
+
+  io.to(ONLINE_USERS_CHANNEL).emit("users:online", {
+    count: users.length,
+    users
+  });
+}
+
+function registerOnlineUser(socketId: string, userId: string, nickname: string) {
+  const previousUserId = onlineUserSessions.get(socketId);
+
+  if (previousUserId && previousUserId !== userId) {
+    removeOnlineUserSocket(socketId);
+  }
+
+  const existingUser = onlineUsers.get(userId);
+
+  if (existingUser) {
+    existingUser.nickname = nickname;
+    existingUser.sockets.add(socketId);
+  } else {
+    onlineUsers.set(userId, {
+      nickname,
+      sockets: new Set([socketId]),
+      userId
+    });
+  }
+
+  onlineUserSessions.set(socketId, userId);
+}
+
+function removeOnlineUserSocket(socketId: string) {
+  const userId = onlineUserSessions.get(socketId);
+
+  if (!userId) {
+    return false;
+  }
+
+  onlineUserSessions.delete(socketId);
+  const user = onlineUsers.get(userId);
+
+  if (user) {
+    user.sockets.delete(socketId);
+
+    if (user.sockets.size === 0) {
+      onlineUsers.delete(userId);
     }
   }
 
-  return userIds.size;
+  return true;
 }
 
 function getRoomPresence(roomId: string) {
@@ -389,11 +600,6 @@ function normalizeId(value: unknown) {
   return String(value || "").trim() || null;
 }
 
-function normalizeSlug(value: unknown) {
-  const slug = String(value || "").trim().toLowerCase();
-  return slug.replace(/[^a-z0-9-]/g, "") || null;
-}
-
 function findJoinUser({ email, userId }: { email: string | null; userId: string | null }) {
   if (userId) {
     return prisma.user.findFirst({
@@ -434,9 +640,9 @@ function formatMemberNickname(user: {
     .slice(0, 24);
 }
 
-function findRoom(slug: string) {
+function findRoom(roomId: string) {
   return prisma.room.findUnique({
-    where: { slug },
+    where: { id: roomId },
     select: {
       id: true,
       name: true,
@@ -445,36 +651,59 @@ function findRoom(slug: string) {
   });
 }
 
-function ensureRoomMembership({ roomId, userId }: { roomId: string; userId: string }) {
-  return prisma.roomMember.upsert({
+function findRoomMembership({ roomId, userId }: { roomId: string; userId: string }) {
+  return prisma.roomMember.findUnique({
     where: {
       userId_roomId: {
         roomId,
         userId
       }
-    },
-    update: {},
-    create: {
-      roomId,
-      userId
     }
   });
 }
 
 async function loadRecentMessages(roomId: string): Promise<ChatMessage[]> {
-  const rows = await prisma.message.findMany({
-    where: { roomId },
-    orderBy: { createdAt: "desc" },
-    take: MAX_HISTORY
-  });
+  const [rows, members] = await prisma.$transaction([
+    prisma.message.findMany({
+      where: { roomId },
+      orderBy: { createdAt: "desc" },
+      take: MAX_HISTORY
+    }),
+    prisma.roomMember.findMany({
+      where: { roomId },
+      select: {
+        createdAt: true,
+        lastReadAt: true,
+        userId: true
+      }
+    })
+  ]);
 
   return rows.reverse().map((message) => ({
     id: message.id,
     userId: message.userId || "",
     nickname: message.nickname,
     text: message.text,
-    createdAt: message.createdAt.toISOString()
+    createdAt: message.createdAt.toISOString(),
+    unreadCount: countUnreadMembers(message, members)
   }));
+}
+
+async function loadUnreadCountUpdates(roomId: string): Promise<ReadCountUpdate[]> {
+  const messages = await loadRecentMessages(roomId);
+
+  return messages.map(({ id, unreadCount }) => ({ id, unreadCount }));
+}
+
+function countUnreadMembers(
+  message: { createdAt: Date; userId: string | null },
+  members: Array<{ createdAt: Date; lastReadAt: Date | null; userId: string }>
+) {
+  return members.filter((member) => (
+    member.userId !== message.userId &&
+    member.createdAt <= message.createdAt &&
+    (!member.lastReadAt || member.lastReadAt < message.createdAt)
+  )).length;
 }
 
 async function saveChatMessage({
@@ -496,28 +725,24 @@ async function saveChatMessage({
       text
     }
   });
+  const unreadCount = await prisma.roomMember.count({
+    where: {
+      roomId,
+      userId: { not: userId },
+      createdAt: { lte: message.createdAt },
+      OR: [
+        { lastReadAt: null },
+        { lastReadAt: { lt: message.createdAt } }
+      ]
+    }
+  });
 
   return {
     id: message.id,
     userId: message.userId || "",
     nickname: message.nickname,
     text: message.text,
-    createdAt: message.createdAt.toISOString()
+    createdAt: message.createdAt.toISOString(),
+    unreadCount
   };
-}
-
-function getDefaultRoomId() {
-  defaultRoomIdPromise ??= prisma.room
-    .upsert({
-      where: { slug: DEFAULT_ROOM.slug },
-      update: {},
-      create: DEFAULT_ROOM
-    })
-    .then((room) => room.id);
-
-  return defaultRoomIdPromise;
-}
-
-function createId() {
-  return `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 9)}`;
 }

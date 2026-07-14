@@ -1,0 +1,5 @@
+ALTER TABLE "RoomMember"
+ADD COLUMN "lastReadAt" TIMESTAMP(3);
+
+UPDATE "RoomMember"
+SET "lastReadAt" = CURRENT_TIMESTAMP;

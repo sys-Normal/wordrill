@@ -3,8 +3,8 @@
 import type { FormEvent } from "react";
 import { Fragment, useEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
+import { ArrowLeft } from "lucide-react";
 import { signIn, signOut, useSession } from "next-auth/react";
-import { useParams } from "next/navigation";
 import type { Socket } from "socket.io-client";
 import { io } from "socket.io-client";
 import {
@@ -28,17 +28,20 @@ type ChatMessage = {
   nickname: string;
   text: string;
   createdAt: string;
+  unreadCount: number;
 };
 
-type SystemMessage = {
+type Message = { type: "chat" } & ChatMessage;
+
+type ChatHistoryPayload = {
+  lastReadAt: string | null;
+  messages: ChatMessage[];
+};
+
+type ReadCountUpdate = {
   id: string;
-  text: string;
-  createdAt: string;
+  unreadCount: number;
 };
-
-type Message =
-  | ({ type: "chat" } & ChatMessage)
-  | ({ type: "system" } & SystemMessage);
 
 type Presence = {
   count: number;
@@ -56,13 +59,24 @@ type AckResult = {
   };
 };
 
-export default function RoomPage() {
-  const params = useParams<{ slug: string }>();
-  const roomSlug = String(params.slug || "");
+type RoomChatProps = {
+  initialRoom: {
+    id: string;
+    name: string;
+  };
+};
+
+export default function RoomChat({ initialRoom }: RoomChatProps) {
+  const roomId = initialRoom.id;
   const { data: session, status } = useSession();
   const socketRef = useRef<Socket | null>(null);
   const messagesRef = useRef<HTMLOListElement | null>(null);
-  const [roomName, setRoomName] = useState("");
+  const hasInitialScrollRef = useRef(false);
+  const initialLastReadAtRef = useRef<string | null>(null);
+  const pendingInitialScrollRef = useRef(false);
+  const pendingAutoScrollRef = useRef(false);
+  const shouldStickToBottomRef = useRef(true);
+  const [roomName, setRoomName] = useState(initialRoom.name);
   const [nickname, setNickname] = useState("");
   const [draft, setDraft] = useState("");
   const [currentUserId, setCurrentUserId] = useState<string | null>(null);
@@ -103,7 +117,7 @@ export default function RoomPage() {
     });
 
     return {
-      count: users.length,
+      count: users.filter((user) => user.online).length,
       users
     };
   }, [presence]);
@@ -135,8 +149,13 @@ export default function RoomPage() {
       setCurrentUserId(user.id);
     };
 
-    const handleChatHistory = (history: ChatMessage[]) => {
-      setMessages(history.map((message) => ({ type: "chat", ...message })));
+    const handleChatHistory = (history: ChatHistoryPayload | ChatMessage[]) => {
+      const nextMessages = Array.isArray(history) ? history : history.messages;
+      initialLastReadAtRef.current = Array.isArray(history) ? null : history.lastReadAt;
+      pendingInitialScrollRef.current = true;
+      hasInitialScrollRef.current = false;
+      pendingAutoScrollRef.current = false;
+      setMessages(nextMessages.map((message) => ({ type: "chat", ...message })));
     };
 
     const handleChatMessage = (message: ChatMessage) => {
@@ -145,12 +164,18 @@ export default function RoomPage() {
           return current;
         }
 
+        prepareForIncomingMessage();
         return [...current, { type: "chat", ...message }];
       });
     };
 
-    const handleSystemMessage = (message: SystemMessage) => {
-      setMessages((current) => [...current, { type: "system", ...message }]);
+    const handleReadCountUpdate = (updates: ReadCountUpdate[]) => {
+      const counts = new Map(updates.map((update) => [update.id, update.unreadCount]));
+
+      setMessages((current) => current.map((message) => ({
+        ...message,
+        unreadCount: counts.get(message.id) ?? message.unreadCount
+      })));
     };
 
     const handlePresenceUpdate = (nextPresence: Presence) => {
@@ -163,7 +188,7 @@ export default function RoomPage() {
     socket.on("user:ready", handleUserReady);
     socket.on("chat:history", handleChatHistory);
     socket.on("chat:message", handleChatMessage);
-    socket.on("system:message", handleSystemMessage);
+    socket.on("message:read:update", handleReadCountUpdate);
     socket.on("presence:update", handlePresenceUpdate);
     socket.connect();
 
@@ -173,7 +198,7 @@ export default function RoomPage() {
       socket.off("user:ready", handleUserReady);
       socket.off("chat:history", handleChatHistory);
       socket.off("chat:message", handleChatMessage);
-      socket.off("system:message", handleSystemMessage);
+      socket.off("message:read:update", handleReadCountUpdate);
       socket.off("presence:update", handlePresenceUpdate);
       socket.disconnect();
       socketRef.current = null;
@@ -181,11 +206,115 @@ export default function RoomPage() {
   }, [socket]);
 
   useEffect(() => {
-    messagesRef.current?.scrollTo({
-      top: messagesRef.current.scrollHeight,
-      behavior: "smooth"
+    const container = messagesRef.current;
+
+    if (!container) {
+      return;
+    }
+
+    if (!hasInitialScrollRef.current && pendingInitialScrollRef.current) {
+      const targetMessageId = findInitialReadPosition(
+        messages,
+        initialLastReadAtRef.current
+      );
+      const frameId = window.requestAnimationFrame(() => {
+        if (targetMessageId) {
+          const targetElement = Array.from(
+            container.querySelectorAll<HTMLElement>("[data-message-id]")
+          ).find((element) => element.dataset.messageId === targetMessageId);
+
+          if (targetElement) {
+            container.scrollTo({
+              top: Math.max(0, targetElement.offsetTop - container.offsetTop - 8),
+              behavior: "auto"
+            });
+            shouldStickToBottomRef.current = false;
+          }
+        } else {
+          container.scrollTo({ top: container.scrollHeight, behavior: "auto" });
+          shouldStickToBottomRef.current = true;
+        }
+
+        hasInitialScrollRef.current = true;
+        pendingInitialScrollRef.current = false;
+        pendingAutoScrollRef.current = false;
+      });
+
+      return () => window.cancelAnimationFrame(frameId);
+    }
+
+    if (!pendingAutoScrollRef.current && !shouldStickToBottomRef.current) {
+      return;
+    }
+
+    const frameId = window.requestAnimationFrame(() => {
+      container.scrollTo({
+        top: container.scrollHeight,
+        behavior: "auto"
+      });
+      hasInitialScrollRef.current = true;
+      pendingAutoScrollRef.current = false;
+      shouldStickToBottomRef.current = true;
     });
+
+    return () => window.cancelAnimationFrame(frameId);
   }, [messages]);
+
+  useEffect(() => {
+    const latestMessage = messages[messages.length - 1];
+
+    if (
+      !joined ||
+      !latestMessage ||
+      !shouldStickToBottomRef.current ||
+      document.visibilityState !== "visible"
+    ) {
+      return;
+    }
+
+    const markLatestMessageRead = () => {
+      if (
+        document.visibilityState === "visible" &&
+        shouldStickToBottomRef.current
+      ) {
+        socketRef.current?.emit("message:read", { messageId: latestMessage.id });
+      }
+    };
+    const frameId = window.requestAnimationFrame(markLatestMessageRead);
+
+    document.addEventListener("visibilitychange", markLatestMessageRead);
+
+    return () => {
+      window.cancelAnimationFrame(frameId);
+      document.removeEventListener("visibilitychange", markLatestMessageRead);
+    };
+  }, [joined, messages]);
+
+  function handleMessagesScroll() {
+    const container = messagesRef.current;
+
+    if (!container) {
+      return;
+    }
+
+    if (!hasInitialScrollRef.current) {
+      return;
+    }
+
+    if (pendingAutoScrollRef.current) {
+      return;
+    }
+
+    shouldStickToBottomRef.current = isNearScrollBottom(container);
+
+    if (shouldStickToBottomRef.current && joined) {
+      const latestMessage = messages[messages.length - 1];
+
+      if (latestMessage && document.visibilityState === "visible") {
+        socketRef.current?.emit("message:read", { messageId: latestMessage.id });
+      }
+    }
+  }
 
   useEffect(() => {
     if (status !== "authenticated") {
@@ -225,7 +354,7 @@ export default function RoomPage() {
       !profileLoaded ||
       joined ||
       !nickname ||
-      !roomSlug ||
+      !roomId ||
       (!activeUserId && !activeUserEmail)
     ) {
       return;
@@ -239,30 +368,51 @@ export default function RoomPage() {
     joined,
     nickname,
     profileLoaded,
-    roomSlug,
+    roomId,
     socket,
     socketConnected
   ]);
 
-  function joinSocketRoom() {
-    socketRef.current?.emit("user:join", {
-      email: activeUserEmail,
-      nickname,
-      roomSlug,
-      userId: activeUserId
-    }, (result: AckResult) => {
-      if (result?.ok) {
-        setSessionStorageItem(
-          browserStorageKeys.session.chat.lastNickname,
-          result.nickname || nickname
+  async function joinSocketRoom() {
+    try {
+      const response = await fetch(`/api/rooms/${encodeURIComponent(roomId)}/join`, {
+        method: "POST"
+      });
+
+      if (!response.ok) {
+        setJoinError(
+          response.status === 404
+            ? "존재하지 않는 채팅방입니다."
+            : "채팅방 참여 정보를 등록하지 못했습니다."
         );
-        setRoomName(result.room?.name || roomSlug);
-        setJoinError("");
-        setJoined(true);
-      } else {
-        setJoinError(result?.error || "채팅방에 입장하지 못했습니다.");
+        return;
       }
-    });
+
+      const data = await response.json();
+      const joinedRoomId = String(data.room?.id || roomId);
+      setRoomName(data.room?.name || "Chat room");
+
+      socketRef.current?.emit("user:join", {
+        email: activeUserEmail,
+        nickname,
+        roomId: joinedRoomId,
+        userId: activeUserId
+      }, (result: AckResult) => {
+        if (result?.ok) {
+          setSessionStorageItem(
+            browserStorageKeys.session.chat.lastNickname,
+            result.nickname || nickname
+          );
+          setRoomName(result.room?.name || data.room?.name || "Chat room");
+          setJoinError("");
+          setJoined(true);
+        } else {
+          setJoinError(result?.error || "채팅방에 입장하지 못했습니다.");
+        }
+      });
+    } catch {
+      setJoinError("채팅방 참여 정보를 등록하지 못했습니다.");
+    }
   }
 
   function joinRoom(event: FormEvent<HTMLFormElement>) {
@@ -285,7 +435,7 @@ export default function RoomPage() {
 
   async function handleSignOut() {
     removeSessionStorageItem(browserStorageKeys.session.chat.lastNickname);
-    await signOut({ redirectTo: "/" });
+    await signOut({ redirectTo: "/login" });
   }
 
   async function loginWithTestAccount(event: FormEvent<HTMLFormElement>) {
@@ -311,11 +461,22 @@ export default function RoomPage() {
       return;
     }
 
-    socketRef.current?.emit("chat:message", { roomSlug, text }, (result: AckResult) => {
+    prepareForIncomingMessage();
+
+    socketRef.current?.emit("chat:message", { roomId, text }, (result: AckResult) => {
       if (result?.ok) {
         setDraft("");
       }
     });
+  }
+
+  function prepareForIncomingMessage() {
+    const container = messagesRef.current;
+
+    pendingAutoScrollRef.current = Boolean(
+      shouldStickToBottomRef.current ||
+      (container && isNearScrollBottom(container))
+    );
   }
 
   return (
@@ -325,7 +486,17 @@ export default function RoomPage() {
           <AppMenu isAuthenticated={isAuthenticated} onSignOut={handleSignOut} />
           <div className="appMain">
             <header className="chatHeader">
-              <h1 className="srOnly">{roomName || "Chat room"}</h1>
+              <div className="roomHeaderIdentity">
+                <Link
+                  aria-label="채팅방 목록으로"
+                  className="roomBackLink"
+                  href="/rooms"
+                  title="채팅방 목록으로"
+                >
+                  <ArrowLeft aria-hidden="true" size={22} />
+                </Link>
+                <h1 className="roomHeaderTitle">{roomName || "채팅방"}</h1>
+              </div>
               <div className="headerActions">
                 <div className="statusPill" aria-live="polite">
                   <span className="statusDot" />
@@ -421,7 +592,12 @@ export default function RoomPage() {
             </aside>
 
             <section className="conversation" aria-label="Messages">
-              <ol ref={messagesRef} className="messages" aria-live="polite">
+              <ol
+                ref={messagesRef}
+                className="messages"
+                aria-live="polite"
+                onScroll={handleMessagesScroll}
+              >
                 {messages.map((message, index) => {
                   const previousMessage = messages[index - 1];
                   const showDateDivider =
@@ -429,7 +605,7 @@ export default function RoomPage() {
                     getDateKey(previousMessage.createdAt) !== getDateKey(message.createdAt);
 
                   return (
-                    <Fragment key={`${message.type}-${message.id}-${index}`}>
+                    <Fragment key={`${message.id}-${index}`}>
                       {showDateDivider ? (
                         <li className="dateDivider">
                           <time dateTime={getDateKey(message.createdAt)}>
@@ -437,19 +613,26 @@ export default function RoomPage() {
                           </time>
                         </li>
                       ) : null}
-                      {message.type === "system" ? (
-                        <li className="message system">{message.text}</li>
-                      ) : (
-                        <li
-                          className={`message ${message.userId === currentUserId ? "mine" : ""}`}
-                        >
+                      <li
+                        className={`message ${message.userId === currentUserId ? "mine" : ""}`}
+                        data-message-id={message.id}
+                      >
+                        <div className="messageBubble">
                           <div className="messageMeta">
                             <span className="messageAuthor">{message.nickname}</span>
                             <time dateTime={message.createdAt}>{formatTime(message.createdAt)}</time>
                           </div>
                           <div className="messageText">{message.text}</div>
-                        </li>
-                      )}
+                        </div>
+                        {message.unreadCount > 0 ? (
+                          <span
+                            aria-label={`${message.unreadCount}명이 아직 읽지 않음`}
+                            className="messageUnreadCount"
+                          >
+                            {message.unreadCount}
+                          </span>
+                        ) : null}
+                      </li>
                     </Fragment>
                   );
                 })}
@@ -475,9 +658,34 @@ export default function RoomPage() {
   );
 }
 
+function findInitialReadPosition(messages: Message[], lastReadAt: string | null) {
+  if (!lastReadAt || messages.length === 0) {
+    return null;
+  }
+
+  const lastReadTime = new Date(lastReadAt).getTime();
+  const latestMessageTime = new Date(messages[messages.length - 1].createdAt).getTime();
+
+  if (lastReadTime >= latestMessageTime) {
+    return null;
+  }
+
+  let lastReadIndex = -1;
+
+  for (let index = 0; index < messages.length; index += 1) {
+    if (new Date(messages[index].createdAt).getTime() <= lastReadTime) {
+      lastReadIndex = index;
+    } else {
+      break;
+    }
+  }
+
+  return messages[Math.max(0, lastReadIndex)].id;
+}
+
 function formatTime(value: string) {
   return new Intl.DateTimeFormat("ko-KR", {
-    hour: "2-digit",
+    hour: "numeric",
     minute: "2-digit"
   }).format(new Date(value));
 }
@@ -503,4 +711,9 @@ function normalizeNickname(value: unknown) {
 
 function getUserInitial(nickname: string) {
   return nickname.trim().charAt(0).toUpperCase() || "?";
+}
+
+function isNearScrollBottom(element: HTMLElement) {
+  const distanceFromBottom = element.scrollHeight - element.scrollTop - element.clientHeight;
+  return distanceFromBottom <= 72;
 }

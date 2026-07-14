@@ -1,6 +1,8 @@
 import { NextResponse } from "next/server";
 import { auth } from "../../../auth";
 import { prisma } from "../../../lib/prisma";
+import { emitRoomListUpdate } from "../../../lib/room-list-events";
+import { listRoomSummaries } from "../../../lib/room-summary";
 import { getSessionUser } from "../../../lib/session-user";
 
 const DEFAULT_ROOM = {
@@ -18,35 +20,8 @@ export async function GET() {
 
   await ensureDefaultRoomMembership(user.id);
 
-  const memberships = await prisma.roomMember.findMany({
-    where: { userId: user.id },
-    orderBy: { createdAt: "asc" },
-    select: {
-      room: {
-        select: {
-          id: true,
-          name: true,
-          slug: true,
-          updatedAt: true,
-          messages: {
-            orderBy: { createdAt: "desc" },
-            select: {
-              createdAt: true,
-              nickname: true,
-              text: true
-            },
-            take: 1
-          },
-          _count: {
-            select: { messages: true }
-          }
-        }
-      }
-    }
-  });
-
   return NextResponse.json({
-    rooms: memberships.map(({ room }) => serializeRoom(room))
+    rooms: await listRoomSummaries(user.id)
   });
 }
 
@@ -65,21 +40,8 @@ export async function POST(request: Request) {
     return NextResponse.json({ error: "Room name is required" }, { status: 400 });
   }
 
-  const room = await createRoomWithUniqueSlug(name);
-
-  await prisma.roomMember.upsert({
-    where: {
-      userId_roomId: {
-        roomId: room.id,
-        userId: user.id
-      }
-    },
-    update: {},
-    create: {
-      roomId: room.id,
-      userId: user.id
-    }
-  });
+  const room = await createRoomWithUniqueSlug(name, user.id);
+  await emitRoomListUpdate(room.id);
 
   return NextResponse.json({
     room: {
@@ -88,43 +50,10 @@ export async function POST(request: Request) {
       messageCount: 0,
       name: room.name,
       slug: room.slug,
+      unreadCount: 0,
       updatedAt: room.updatedAt.toISOString()
     }
   }, { status: 201 });
-}
-
-type RoomWithSummary = {
-  id: string;
-  name: string;
-  slug: string;
-  updatedAt: Date;
-  messages: Array<{
-    createdAt: Date;
-    nickname: string;
-    text: string;
-  }>;
-  _count: {
-    messages: number;
-  };
-};
-
-function serializeRoom(room: RoomWithSummary) {
-  const lastMessage = room.messages[0] || null;
-
-  return {
-    id: room.id,
-    lastMessage: lastMessage
-      ? {
-          createdAt: lastMessage.createdAt.toISOString(),
-          nickname: lastMessage.nickname,
-          text: lastMessage.text
-        }
-      : null,
-    messageCount: room._count.messages,
-    name: room.name,
-    slug: room.slug,
-    updatedAt: room.updatedAt.toISOString()
-  };
 }
 
 async function ensureDefaultRoomMembership(userId: string) {
@@ -144,12 +73,13 @@ async function ensureDefaultRoomMembership(userId: string) {
     update: {},
     create: {
       roomId: room.id,
-      userId
+      userId,
+      lastReadAt: new Date()
     }
   });
 }
 
-async function createRoomWithUniqueSlug(name: string) {
+async function createRoomWithUniqueSlug(name: string, creatorId: string) {
   const baseSlug = slugify(name);
 
   for (let index = 0; index < 20; index += 1) {
@@ -159,7 +89,13 @@ async function createRoomWithUniqueSlug(name: string) {
       return await prisma.room.create({
         data: {
           name,
-          slug
+          slug,
+          members: {
+            create: {
+              userId: creatorId,
+              lastReadAt: new Date()
+            }
+          }
         }
       });
     } catch (error) {
@@ -172,7 +108,13 @@ async function createRoomWithUniqueSlug(name: string) {
   return prisma.room.create({
     data: {
       name,
-      slug: `${baseSlug}-${Date.now().toString(36)}`
+      slug: `${baseSlug}-${Date.now().toString(36)}`,
+      members: {
+        create: {
+          userId: creatorId,
+          lastReadAt: new Date()
+        }
+      }
     }
   });
 }

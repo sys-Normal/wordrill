@@ -288,7 +288,8 @@ input:focus {
 
 .chatPanel {
   width: 100%;
-  min-height: 100vh;
+  height: 100dvh;
+  min-height: 0;
   display: flex;
   flex-direction: column;
   overflow: hidden;
@@ -300,22 +301,28 @@ input:focus {
 
 .appLayout {
   flex: 1;
-  min-height: 100vh;
+  height: 100%;
+  min-height: 0;
   display: grid;
   grid-template-columns: auto minmax(0, 1fr);
 }
 
 .appMain {
   min-width: 0;
-  min-height: 100vh;
+  height: 100%;
+  min-height: 0;
   display: flex;
   flex-direction: column;
+  overflow: hidden;
   background: var(--panel);
 }
 
 .appMenu {
   width: 56px;
-  min-height: 100vh;
+  height: 100%;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
   overflow: hidden;
   border-right: 1px solid var(--line);
   background: var(--panel-muted);
@@ -324,6 +331,12 @@ input:focus {
 
 .appMenu.menuOpen {
   width: 260px;
+}
+
+.menuHeader {
+  width: 260px;
+  display: flex;
+  align-items: center;
 }
 
 .menuButton {
@@ -351,19 +364,40 @@ input:focus {
   background: currentColor;
 }
 
-.menuPanel {
-  width: 260px;
-  display: grid;
-  gap: 8px;
-  padding: 4px 8px 12px;
+.menuBrand {
+  margin-left: 12px;
+  overflow: hidden;
   opacity: 0;
-  pointer-events: none;
+  color: var(--accent);
+  font-size: 0.98rem;
+  font-weight: 900;
+  text-align: center;
+  white-space: nowrap;
   transition: opacity 120ms ease;
 }
 
-.menuOpen .menuPanel {
+.menuOpen .menuBrand {
   opacity: 1;
-  pointer-events: auto;
+}
+
+.menuPanel {
+  width: 260px;
+  min-height: 0;
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  padding: 4px 8px 12px;
+}
+
+.menuTop {
+  display: grid;
+  gap: 8px;
+}
+
+.menuBottom {
+  display: grid;
+  gap: 8px;
+  margin-top: auto;
 }
 
 .menuLink {
@@ -398,8 +432,33 @@ input:focus {
 .menuIconAction {
   width: 40px;
   min-height: 40px;
-  justify-content: center;
-  padding: 0;
+  justify-content: flex-start;
+  gap: 10px;
+  padding: 0 9px;
+  white-space: nowrap;
+  transition: width 180ms ease, background 120ms ease, border-color 120ms ease;
+}
+
+.menuOpen .menuIconAction {
+  width: 244px;
+}
+
+.menuIconAction svg {
+  flex: 0 0 auto;
+}
+
+.menuLabel {
+  overflow: hidden;
+  opacity: 0;
+  transition: opacity 120ms ease;
+}
+
+.menuOpen .menuLabel {
+  opacity: 1;
+}
+
+.navThemeToggle svg {
+  color: var(--accent);
 }
 
 .srOnly {
@@ -414,11 +473,44 @@ input:focus {
 .chatHeader {
   display: flex;
   align-items: center;
-  justify-content: flex-end;
+  justify-content: space-between;
   gap: 12px;
   min-height: 56px;
   padding: 8px 12px;
   border-bottom: 1px solid var(--line);
+}
+
+.roomHeaderIdentity {
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.roomBackLink {
+  width: 40px;
+  min-width: 40px;
+  min-height: 40px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border: 1px solid transparent;
+  border-radius: 8px;
+  color: var(--ink);
+  text-decoration: none;
+  transition: border-color 160ms ease, background 160ms ease;
+}
+
+.roomBackLink:hover {
+  border-color: var(--line);
+  background: var(--hover);
+}
+
+.roomHeaderTitle {
+  overflow: hidden;
+  font-size: 1.05rem;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .headerActions {
@@ -578,6 +670,87 @@ h1 {
   width: 100%;
 }
 
+.recentAccountList {
+  display: grid;
+  gap: 10px;
+  width: 100%;
+}
+
+.recentAccountRow {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 44px;
+  gap: 8px;
+  min-width: 0;
+}
+
+.recentAccountButton {
+  min-width: 0;
+  width: 100%;
+}
+
+.recentAccountButton span {
+  display: block;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.recentAccountRemoveButton {
+  width: 44px;
+  padding: 0;
+}
+
+.recentAccountRemoveButton:hover {
+  border-color: var(--danger);
+  color: var(--danger);
+}
+
+.confirmModalBackdrop {
+  position: fixed;
+  z-index: 100;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  padding: 20px;
+  background: rgb(15 23 42 / 58%);
+}
+
+.confirmModal {
+  width: min(380px, 100%);
+  padding: 22px;
+  border: 1px solid var(--line);
+  border-radius: 18px;
+  background: var(--panel);
+  box-shadow: 0 24px 70px rgb(15 23 42 / 28%);
+  text-align: left;
+}
+
+.confirmModal h2 {
+  margin: 0 0 10px;
+  font-size: 1.1rem;
+}
+
+.confirmModal p {
+  margin: 0;
+  color: var(--muted);
+  line-height: 1.55;
+  overflow-wrap: anywhere;
+}
+
+.confirmModalActions {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 10px;
+  margin-top: 22px;
+}
+
+.dangerButton {
+  border-color: var(--danger);
+  background: var(--danger);
+  color: white;
+}
+
 .authError {
   margin: 0;
   color: var(--danger);
@@ -641,16 +814,85 @@ h1 {
 
 .roomsView {
   flex: 1;
+  min-height: 0;
   display: grid;
   align-content: start;
   gap: 12px;
+  overflow-y: auto;
   padding: 12px;
 }
 
-.roomCreateForm {
+.usersView {
+  flex: 1;
+  min-height: 0;
   display: grid;
-  grid-template-columns: 1fr auto;
+  align-content: start;
+  gap: 18px;
+  overflow-y: auto;
+  padding: 18px;
+}
+
+.usersView h1,
+.usersView p {
+  margin: 0;
+}
+
+.usersView p {
+  color: var(--muted);
+}
+
+.usersHeader {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 16px;
+}
+
+.usersHeader > div {
+  display: grid;
+  gap: 6px;
+}
+
+.usersStatus {
+  padding: 24px 0;
+  text-align: center;
+}
+
+.onlineUsersList {
+  display: grid;
+  gap: 8px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.onlineUsersList li {
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 12px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: var(--panel);
+}
+
+.onlineUsersList li.currentUser {
+  border-color: var(--current-user-border);
+  background: var(--current-user-bg);
+}
+
+.roomToolbar {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto auto;
   gap: 10px;
+}
+
+.activeToolbarButton {
+  border-color: var(--accent);
+  background: var(--accent-soft);
+  color: var(--accent);
 }
 
 .roomsStatus {
@@ -668,6 +910,23 @@ h1 {
   border: 1px solid var(--line);
   border-radius: 8px;
   overflow: hidden;
+}
+
+.roomListItem {
+  min-width: 0;
+}
+
+.editingRoomList .roomListItem {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 52px;
+  align-items: center;
+}
+
+.roomEditAction {
+  width: 40px;
+  min-height: 40px;
+  padding: 0;
+  margin: 0 8px;
 }
 
 .roomLink {
@@ -701,7 +960,7 @@ h1 {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  border-radius: 50%;
+  border-radius: 12px;
   background: var(--accent-soft);
   color: var(--accent);
   font-weight: 900;
@@ -745,11 +1004,56 @@ h1 {
   white-space: nowrap;
 }
 
+.roomBottomLine {
+  min-width: 0;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 8px;
+}
+
+.roomUnreadBadge {
+  min-width: 22px;
+  height: 22px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0 6px;
+  border-radius: 999px;
+  background: var(--accent);
+  color: white;
+  font-size: 0.72rem;
+  font-weight: 900;
+  line-height: 1;
+}
+
+.roomCreateModal {
+  width: min(440px, 100%);
+}
+
+.roomCreateModalForm {
+  display: grid;
+  gap: 10px;
+  margin-top: 20px;
+}
+
+.roomCreateModalForm label {
+  color: var(--ink);
+  font-size: 0.9rem;
+  font-weight: 800;
+}
+
+.roomCreateModalForm .confirmModalActions {
+  margin-top: 10px;
+}
+
 .roomView {
   flex: 1;
   min-height: 0;
   display: grid;
   grid-template-columns: minmax(170px, 220px) 1fr;
+  grid-template-rows: minmax(0, 1fr);
+  overflow: hidden;
 }
 
 .sidebar {
@@ -872,6 +1176,7 @@ h1 {
   min-height: 0;
   display: grid;
   grid-template-rows: 1fr auto;
+  overflow: hidden;
 }
 
 .messages {
@@ -887,8 +1192,16 @@ h1 {
 
 .message {
   align-self: flex-start;
+  min-width: 0;
   width: fit-content;
   max-width: min(72ch, 82%);
+  display: flex;
+  align-items: flex-end;
+  gap: 6px;
+}
+
+.messageBubble {
+  min-width: 0;
   border: 1px solid var(--line);
   border-radius: 8px;
   background: var(--received);
@@ -919,6 +1232,9 @@ h1 {
 
 .message.mine {
   align-self: flex-end;
+}
+
+.message.mine .messageBubble {
   background: var(--sent);
 }
 
@@ -942,6 +1258,19 @@ h1 {
 .messageAuthor {
   color: var(--ink);
   font-weight: 800;
+}
+
+.messageUnreadCount {
+  flex: 0 0 auto;
+  padding-bottom: 2px;
+  color: var(--accent-strong);
+  font-size: 0.76rem;
+  font-weight: 900;
+  line-height: 1;
+}
+
+.message.mine .messageUnreadCount {
+  order: -1;
 }
 
 .messageText {
@@ -1025,23 +1354,24 @@ h1 {
   }
 
   .chatPanel {
-    min-height: 100vh;
+    min-height: 0;
     border: 0;
     border-radius: 0;
   }
 
   .chatHeader {
-    align-items: flex-start;
-    flex-direction: column;
+    align-items: center;
+    flex-direction: row;
   }
 
   .headerActions {
-    width: 100%;
-    justify-content: flex-start;
+    width: auto;
+    justify-content: flex-end;
   }
 
   .roomView {
     grid-template-columns: 1fr;
+    grid-template-rows: auto minmax(0, 1fr);
   }
 
   .sidebar {
@@ -1068,7 +1398,11 @@ h1 {
     max-width: 92%;
   }
 
-  .roomCreateForm {
-    grid-template-columns: 1fr;
+  .roomToolbar {
+    grid-template-columns: 1fr auto auto;
+  }
+
+  .roomToolbar input {
+    grid-column: 1 / -1;
   }
 }

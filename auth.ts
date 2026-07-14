@@ -3,6 +3,11 @@ import Credentials from "next-auth/providers/credentials";
 import Google from "next-auth/providers/google";
 import { prisma } from "./lib/prisma";
 import { verifyPassword } from "./lib/password";
+import {
+  readCookieValue,
+  RECENT_LOGIN_COOKIE_PREFIX,
+  verifyRecentLoginToken
+} from "./lib/recent-login";
 
 export const { handlers, auth, signIn, signOut } = NextAuth({
   providers: [
@@ -14,9 +19,37 @@ export const { handlers, auth, signIn, signOut } = NextAuth({
       name: "Test account",
       credentials: {
         identifier: { label: "Email or ID", type: "text" },
-        password: { label: "Password", type: "password" }
+        password: { label: "Password", type: "password" },
+        recentAccountId: { label: "Recent account", type: "text" }
       },
-      async authorize(credentials) {
+      async authorize(credentials, request) {
+        const recentAccountId = String(credentials?.recentAccountId || "").trim();
+
+        if (recentAccountId) {
+          const cookieName = `${RECENT_LOGIN_COOKIE_PREFIX}${recentAccountId}`;
+          const token = readCookieValue(request.headers.get("cookie"), cookieName);
+          const payload = verifyRecentLoginToken(token);
+
+          if (!payload || payload.presetId !== recentAccountId) {
+            return null;
+          }
+
+          const recentUser = await prisma.user.findUnique({
+            where: { id: payload.sub }
+          });
+
+          if (!recentUser) {
+            return null;
+          }
+
+          return {
+            id: recentUser.id,
+            email: recentUser.email,
+            image: recentUser.image,
+            name: recentUser.name
+          };
+        }
+
         const identifier = String(credentials?.identifier || "").trim().toLowerCase();
         const password = String(credentials?.password || "");
 

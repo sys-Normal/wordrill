@@ -68,7 +68,7 @@ export default function SettingsPage() {
     setMessage("");
 
     try {
-      await signOut({ redirectTo: "/" });
+      await signOut({ redirectTo: "/login" });
     } catch {
       setMessage("로그아웃하지 못했습니다. 다시 시도해주세요.");
     }
