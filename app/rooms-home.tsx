@@ -479,12 +479,24 @@ export default function RoomsHome({ screen }: RoomsHomeProps) {
                           <span className="roomLastMessage">
                             {formatLastMessage(room)}
                           </span>
-                          {room.unreadCount > 0 ? (
-                            <span
-                              aria-label={`읽지 않은 메시지 ${room.unreadCount}개`}
-                              className="roomUnreadBadge"
-                            >
-                              {room.unreadCount > 99 ? "99+" : room.unreadCount}
+                          {room.mentionCount > 0 || room.unreadCount > 0 ? (
+                            <span className="roomBadges">
+                              {room.mentionCount > 0 ? (
+                                <span
+                                  aria-label={`읽지 않은 멘션 ${room.mentionCount}개`}
+                                  className="roomMentionBadge"
+                                >
+                                  @
+                                </span>
+                              ) : null}
+                              {room.unreadCount > 0 ? (
+                                <span
+                                  aria-label={`읽지 않은 메시지 ${room.unreadCount}개`}
+                                  className="roomUnreadBadge"
+                                >
+                                  {room.unreadCount > 99 ? "99+" : room.unreadCount}
+                                </span>
+                              ) : null}
                             </span>
                           ) : null}
                         </span>

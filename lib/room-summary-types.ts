@@ -6,6 +6,7 @@ export type RoomSummary = {
     text: string;
   } | null;
   messageCount: number;
+  mentionCount: number;
   name: string;
   slug: string;
   unreadCount: number;

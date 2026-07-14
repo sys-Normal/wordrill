@@ -1,6 +1,6 @@
 "use client";
 
-import type { FormEvent } from "react";
+import type { ChangeEvent, FormEvent, KeyboardEvent } from "react";
 import { Fragment, useEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
 import { ArrowLeft } from "lucide-react";
@@ -28,7 +28,15 @@ type ChatMessage = {
   nickname: string;
   text: string;
   createdAt: string;
+  mentions: MessageMentionRange[];
   unreadCount: number;
+};
+
+type MessageMentionRange = {
+  end: number;
+  label: string;
+  start: number;
+  userId: string;
 };
 
 type Message = { type: "chat" } & ChatMessage;
@@ -70,6 +78,7 @@ export default function RoomChat({ initialRoom }: RoomChatProps) {
   const roomId = initialRoom.id;
   const { data: session, status } = useSession();
   const socketRef = useRef<Socket | null>(null);
+  const draftInputRef = useRef<HTMLInputElement | null>(null);
   const messagesRef = useRef<HTMLOListElement | null>(null);
   const hasInitialScrollRef = useRef(false);
   const initialLastReadAtRef = useRef<string | null>(null);
@@ -79,6 +88,13 @@ export default function RoomChat({ initialRoom }: RoomChatProps) {
   const [roomName, setRoomName] = useState(initialRoom.name);
   const [nickname, setNickname] = useState("");
   const [draft, setDraft] = useState("");
+  const [mentionSearch, setMentionSearch] = useState<{
+    end: number;
+    query: string;
+    start: number;
+  } | null>(null);
+  const [mentionActiveIndex, setMentionActiveIndex] = useState(0);
+  const [selectedMentionUsers, setSelectedMentionUsers] = useState<User[]>([]);
   const [currentUserId, setCurrentUserId] = useState<string | null>(null);
   const [joined, setJoined] = useState(false);
   const [messages, setMessages] = useState<Message[]>([]);
@@ -121,6 +137,24 @@ export default function RoomChat({ initialRoom }: RoomChatProps) {
       users
     };
   }, [presence]);
+  const mentionCandidates = useMemo(() => {
+    if (!mentionSearch) {
+      return [];
+    }
+
+    const query = mentionSearch.query.toLocaleLowerCase("ko-KR");
+
+    return visiblePresence.users
+      .filter((user) => (
+        user.id !== currentUserId &&
+        user.nickname.toLocaleLowerCase("ko-KR").includes(query)
+      ))
+      .slice(0, 8);
+  }, [currentUserId, mentionSearch, visiblePresence.users]);
+
+  useEffect(() => {
+    setMentionActiveIndex(0);
+  }, [mentionSearch?.query]);
 
   const socket = useMemo<Socket | null>(() => {
     if (typeof window === "undefined") {
@@ -463,10 +497,81 @@ export default function RoomChat({ initialRoom }: RoomChatProps) {
 
     prepareForIncomingMessage();
 
-    socketRef.current?.emit("chat:message", { roomId, text }, (result: AckResult) => {
+    const mentions = buildMentionRanges(text, selectedMentionUsers);
+
+    socketRef.current?.emit("chat:message", { roomId, text, mentions }, (result: AckResult) => {
       if (result?.ok) {
         setDraft("");
+        setMentionSearch(null);
+        setSelectedMentionUsers([]);
       }
+    });
+  }
+
+  function updateDraft(event: ChangeEvent<HTMLInputElement>) {
+    const value = event.currentTarget.value;
+    const cursor = event.currentTarget.selectionStart ?? value.length;
+    setDraft(value);
+    setSelectedMentionUsers((users) => (
+      users.filter((user) => value.includes(`@${user.nickname}`))
+    ));
+    updateMentionSearch(value, cursor);
+  }
+
+  function updateMentionSearch(value: string, cursor: number) {
+    const beforeCursor = value.slice(0, cursor);
+    const match = beforeCursor.match(/(?:^|\s)@([^\s@]*)$/u);
+
+    if (!match) {
+      setMentionSearch(null);
+      return;
+    }
+
+    const start = beforeCursor.lastIndexOf("@");
+    setMentionSearch({ end: cursor, query: match[1], start });
+  }
+
+  function handleDraftKeyDown(event: KeyboardEvent<HTMLInputElement>) {
+    if (!mentionSearch || mentionCandidates.length === 0) {
+      return;
+    }
+
+    if (event.key === "ArrowDown") {
+      event.preventDefault();
+      setMentionActiveIndex((index) => (index + 1) % mentionCandidates.length);
+    } else if (event.key === "ArrowUp") {
+      event.preventDefault();
+      setMentionActiveIndex((index) => (
+        (index - 1 + mentionCandidates.length) % mentionCandidates.length
+      ));
+    } else if (event.key === "Enter" || event.key === "Tab") {
+      event.preventDefault();
+      selectMention(mentionCandidates[mentionActiveIndex] || mentionCandidates[0]);
+    } else if (event.key === "Escape") {
+      event.preventDefault();
+      setMentionSearch(null);
+    }
+  }
+
+  function selectMention(user: User) {
+    if (!mentionSearch) {
+      return;
+    }
+
+    const mentionText = `@${user.nickname}`;
+    const nextDraft = `${draft.slice(0, mentionSearch.start)}${mentionText} ${draft.slice(mentionSearch.end)}`;
+    const nextCursor = mentionSearch.start + mentionText.length + 1;
+    setDraft(nextDraft);
+    setMentionSearch(null);
+    setSelectedMentionUsers((users) => (
+      users.some((current) => current.id === user.id)
+        ? users
+        : [...users, user]
+    ));
+
+    window.requestAnimationFrame(() => {
+      draftInputRef.current?.focus();
+      draftInputRef.current?.setSelectionRange(nextCursor, nextCursor);
     });
   }
 
@@ -622,7 +727,7 @@ export default function RoomChat({ initialRoom }: RoomChatProps) {
                             <span className="messageAuthor">{message.nickname}</span>
                             <time dateTime={message.createdAt}>{formatTime(message.createdAt)}</time>
                           </div>
-                          <div className="messageText">{message.text}</div>
+                          <div className="messageText">{renderMessageText(message)}</div>
                         </div>
                         {message.unreadCount > 0 ? (
                           <span
@@ -639,13 +744,42 @@ export default function RoomChat({ initialRoom }: RoomChatProps) {
               </ol>
 
               <form className="messageForm" onSubmit={sendMessage}>
-                <input
-                  maxLength={500}
-                  autoComplete="off"
-                  placeholder="메시지를 입력하세요"
-                  value={draft}
-                  onChange={(event) => setDraft(event.target.value)}
-                />
+                <div className="messageComposer">
+                  {mentionSearch && mentionCandidates.length > 0 ? (
+                    <ul className="mentionSuggestions" role="listbox">
+                      {mentionCandidates.map((user, index) => (
+                        <li key={user.id}>
+                          <button
+                            aria-selected={index === mentionActiveIndex}
+                            className={index === mentionActiveIndex ? "activeMentionSuggestion" : ""}
+                            onMouseDown={(event) => event.preventDefault()}
+                            onClick={() => selectMention(user)}
+                            role="option"
+                            type="button"
+                          >
+                            <span className="userAvatar" aria-hidden="true">
+                              {getUserInitial(user.nickname)}
+                            </span>
+                            <span>{user.nickname}</span>
+                          </button>
+                        </li>
+                      ))}
+                    </ul>
+                  ) : null}
+                  <input
+                    ref={draftInputRef}
+                    maxLength={500}
+                    autoComplete="off"
+                    placeholder="메시지를 입력하세요 (@로 멘션)"
+                    value={draft}
+                    onChange={updateDraft}
+                    onClick={(event) => updateMentionSearch(
+                      event.currentTarget.value,
+                      event.currentTarget.selectionStart ?? event.currentTarget.value.length
+                    )}
+                    onKeyDown={handleDraftKeyDown}
+                  />
+                </div>
                 <button type="submit">Send</button>
               </form>
             </section>
@@ -656,6 +790,79 @@ export default function RoomChat({ initialRoom }: RoomChatProps) {
       </section>
     </main>
   );
+}
+
+function buildMentionRanges(text: string, users: User[]): MessageMentionRange[] {
+  const ranges: MessageMentionRange[] = [];
+
+  for (const user of [...users].sort((left, right) => right.nickname.length - left.nickname.length)) {
+    const token = `@${user.nickname}`;
+    let start = text.indexOf(token);
+
+    while (start !== -1) {
+      ranges.push({
+        end: start + token.length,
+        label: user.nickname,
+        start,
+        userId: user.id
+      });
+      start = text.indexOf(token, start + token.length);
+    }
+  }
+
+  const sorted = ranges.sort((left, right) => left.start - right.start || right.end - left.end);
+  const nonOverlapping: MessageMentionRange[] = [];
+
+  for (const range of sorted) {
+    const previous = nonOverlapping[nonOverlapping.length - 1];
+
+    if (!previous || range.start >= previous.end) {
+      nonOverlapping.push(range);
+    }
+  }
+
+  return nonOverlapping.slice(0, 20);
+}
+
+function renderMessageText(message: Message) {
+  const mentions = (message.mentions || [])
+    .filter((mention) => (
+      mention.start >= 0 &&
+      mention.end <= message.text.length &&
+      mention.end > mention.start &&
+      message.text.slice(mention.start, mention.end) === `@${mention.label}`
+    ))
+    .sort((left, right) => left.start - right.start);
+
+  if (mentions.length === 0) {
+    return message.text;
+  }
+
+  const parts = [];
+  let cursor = 0;
+
+  for (const mention of mentions) {
+    if (mention.start < cursor) {
+      continue;
+    }
+
+    if (mention.start > cursor) {
+      parts.push(message.text.slice(cursor, mention.start));
+    }
+
+    parts.push(
+      <span className="messageMention" key={`${mention.userId}-${mention.start}`}>
+        {message.text.slice(mention.start, mention.end)}
+      </span>
+    );
+    cursor = mention.end;
+  }
+
+  if (cursor < message.text.length) {
+    parts.push(message.text.slice(cursor));
+  }
+
+  return parts;
 }
 
 function findInitialReadPosition(messages: Message[], lastReadAt: string | null) {

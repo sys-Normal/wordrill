@@ -202,14 +202,25 @@ try {
     throw new Error("Chat history did not respect the configured 50-message limit");
   }
 
-  const messageText = `room-list-update-${Date.now()}`;
+  const mentionLabel = "Tester 2";
+  const mentionToken = `@${mentionLabel}`;
+  const messageText = `${mentionToken} room-list-update-${Date.now()}`;
   const updatePromise = waitForMatchingEvent(
     listSocket,
     "room:updated",
     (payload) => payload.id === roomId && payload.lastMessage?.text === messageText
   );
   const sentMessagePromise = waitForEvent(chatSocket, "chat:message");
-  await emitWithAck(chatSocket, "chat:message", { roomId, text: messageText });
+  await emitWithAck(chatSocket, "chat:message", {
+    roomId,
+    text: messageText,
+    mentions: [{
+      end: mentionToken.length,
+      label: mentionLabel,
+      start: 0,
+      userId: tester2.session.user.id
+    }]
+  });
   const [update, sentMessage] = await Promise.all([updatePromise, sentMessagePromise]);
   const roomsResponse = await request(tester2.jar, "/api/rooms");
   const rooms = (await roomsResponse.json()).rooms;
@@ -218,6 +229,7 @@ try {
     update.id !== roomId ||
     update.lastMessage?.text !== messageText ||
     update.messageCount !== 1 ||
+    update.mentionCount !== 1 ||
     update.unreadCount !== 1
   ) {
     throw new Error("room:updated payload did not contain the persisted room summary");
@@ -226,6 +238,7 @@ try {
   if (
     rooms[0]?.id !== roomId ||
     rooms[0]?.lastMessage?.text !== messageText ||
+    rooms[0]?.mentionCount !== 1 ||
     rooms[0]?.unreadCount !== 1
   ) {
     throw new Error("Room list API was not sorted by latest message descending");
@@ -251,16 +264,33 @@ try {
     throw new Error("Chat history did not include the member's last read position");
   }
 
+  if (
+    sentMessage.mentions?.length !== 1 ||
+    sentMessage.mentions[0].userId !== tester2.session.user.id ||
+    sentMessage.mentions[0].label !== mentionLabel
+  ) {
+    throw new Error("Mention metadata was not persisted and broadcast correctly");
+  }
+
   const readUpdatePromise = waitForMatchingEvent(
     listSocket,
     "room:updated",
-    (payload) => payload.id === roomId && payload.unreadCount === 0
+    (payload) => (
+      payload.id === roomId &&
+      payload.lastMessage?.text === messageText &&
+      payload.unreadCount === 0 &&
+      payload.mentionCount === 0
+    )
   );
   await emitWithAck(readerSocket, "message:read", { messageId: sentMessage.id });
   const readUpdate = await readUpdatePromise;
 
-  if (readUpdate.id !== roomId || readUpdate.unreadCount !== 0) {
-    throw new Error("Reading the latest message did not clear the room unread count");
+  if (
+    readUpdate.id !== roomId ||
+    readUpdate.unreadCount !== 0 ||
+    readUpdate.mentionCount !== 0
+  ) {
+    throw new Error("Reading the latest message did not clear unread and mention counts");
   }
 
   console.log(JSON.stringify({
@@ -269,6 +299,8 @@ try {
     eventRoom: update.id,
     lastMessageCreatedAt: update.lastMessage.createdAt,
     messageCount: update.messageCount,
+    mentionAfterRead: readUpdate.mentionCount,
+    mentionBeforeRead: update.mentionCount,
     unreadAfterRead: readUpdate.unreadCount,
     unreadBeforeRead: update.unreadCount,
     ok: true

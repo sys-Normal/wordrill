@@ -16,10 +16,19 @@ type ChatMessage = {
   nickname: string;
   text: string;
   createdAt: string;
+  mentions: MessageMentionRange[];
   unreadCount: number;
 };
 
+type MessageMentionRange = {
+  end: number;
+  label: string;
+  start: number;
+  userId: string;
+};
+
 type ChatPayload = {
+  mentions?: Array<Partial<MessageMentionRange>>;
   roomId?: string;
   text?: string;
 };
@@ -315,6 +324,7 @@ app.prepare().then(() => {
 
       try {
         const message = await saveChatMessage({
+          mentions: payload?.mentions,
           roomId: session.roomId,
           userId: user.userId,
           nickname: user.nickname,
@@ -667,6 +677,11 @@ async function loadRecentMessages(roomId: string): Promise<ChatMessage[]> {
     prisma.message.findMany({
       where: { roomId },
       orderBy: { createdAt: "desc" },
+      include: {
+        mentions: {
+          orderBy: { start: "asc" }
+        }
+      },
       take: MAX_HISTORY
     }),
     prisma.roomMember.findMany({
@@ -685,6 +700,12 @@ async function loadRecentMessages(roomId: string): Promise<ChatMessage[]> {
     nickname: message.nickname,
     text: message.text,
     createdAt: message.createdAt.toISOString(),
+    mentions: message.mentions.map((mention) => ({
+      end: mention.end,
+      label: mention.label,
+      start: mention.start,
+      userId: mention.mentionedUserId
+    })),
     unreadCount: countUnreadMembers(message, members)
   }));
 }
@@ -707,22 +728,44 @@ function countUnreadMembers(
 }
 
 async function saveChatMessage({
+  mentions: mentionInputs,
   roomId,
   userId,
   nickname,
   text
 }: {
+  mentions?: Array<Partial<MessageMentionRange>>;
   roomId: string;
   userId: string;
   nickname: string;
   text: string;
 }): Promise<ChatMessage> {
+  const mentions = await validateMessageMentions({
+    mentions: mentionInputs,
+    roomId,
+    text
+  });
   const message = await prisma.message.create({
     data: {
       roomId,
       userId,
       nickname,
-      text
+      text,
+      mentions: mentions.length
+        ? {
+            create: mentions.map((mention) => ({
+              end: mention.end,
+              label: mention.label,
+              mentionedUserId: mention.userId,
+              start: mention.start
+            }))
+          }
+        : undefined
+    },
+    include: {
+      mentions: {
+        orderBy: { start: "asc" }
+      }
     }
   });
   const unreadCount = await prisma.roomMember.count({
@@ -743,6 +786,83 @@ async function saveChatMessage({
     nickname: message.nickname,
     text: message.text,
     createdAt: message.createdAt.toISOString(),
+    mentions: message.mentions.map((mention) => ({
+      end: mention.end,
+      label: mention.label,
+      start: mention.start,
+      userId: mention.mentionedUserId
+    })),
     unreadCount
   };
+}
+
+async function validateMessageMentions({
+  mentions,
+  roomId,
+  text
+}: {
+  mentions?: Array<Partial<MessageMentionRange>>;
+  roomId: string;
+  text: string;
+}): Promise<MessageMentionRange[]> {
+  if (!Array.isArray(mentions) || mentions.length === 0) {
+    return [];
+  }
+
+  const candidates = mentions.slice(0, 20).flatMap((mention) => {
+    const userId = normalizeId(mention?.userId);
+    const label = String(mention?.label || "").trim();
+    const start = Number(mention?.start);
+    const end = Number(mention?.end);
+
+    if (
+      !userId ||
+      !label ||
+      label.length > 24 ||
+      !Number.isInteger(start) ||
+      !Number.isInteger(end) ||
+      start < 0 ||
+      end <= start ||
+      end > text.length ||
+      text.slice(start, end) !== `@${label}`
+    ) {
+      return [];
+    }
+
+    return [{ end, label, start, userId }];
+  }).sort((left, right) => left.start - right.start || left.end - right.end);
+
+  const nonOverlapping: MessageMentionRange[] = [];
+
+  for (const mention of candidates) {
+    const previous = nonOverlapping[nonOverlapping.length - 1];
+
+    if (!previous || mention.start >= previous.end) {
+      nonOverlapping.push(mention);
+    }
+  }
+  const memberIds = Array.from(new Set(nonOverlapping.map(({ userId }) => userId)));
+  const members = await prisma.roomMember.findMany({
+    where: {
+      roomId,
+      userId: { in: memberIds }
+    },
+    select: {
+      userId: true,
+      user: {
+        select: {
+          email: true,
+          name: true,
+          nickname: true
+        }
+      }
+    }
+  });
+  const labelsByUserId = new Map(
+    members.map((member) => [member.userId, formatMemberNickname(member.user)])
+  );
+
+  return nonOverlapping.filter((mention) => (
+    labelsByUserId.get(mention.userId) === mention.label
+  ));
 }

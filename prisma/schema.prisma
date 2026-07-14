@@ -20,6 +20,7 @@ model User {
   createdAt DateTime  @default(now())
   updatedAt DateTime  @updatedAt
   messages  Message[]
+  mentions  MessageMention[]
   rooms     RoomMember[]
 }
 
@@ -56,8 +57,25 @@ model Message {
   createdAt DateTime @default(now())
   user      User?    @relation(fields: [userId], references: [id], onDelete: SetNull)
   room      Room?    @relation(fields: [roomId], references: [id], onDelete: SetNull)
+  mentions  MessageMention[]
 
   @@index([createdAt])
   @@index([roomId, createdAt])
   @@index([userId])
+}
+
+model MessageMention {
+  id              String   @id @default(cuid())
+  messageId       String
+  mentionedUserId String
+  label           String
+  start           Int
+  end             Int
+  createdAt       DateTime @default(now())
+  message         Message  @relation(fields: [messageId], references: [id], onDelete: Cascade)
+  mentionedUser   User     @relation(fields: [mentionedUserId], references: [id], onDelete: Cascade)
+
+  @@unique([messageId, start, end])
+  @@index([mentionedUserId, createdAt])
+  @@index([messageId])
 }

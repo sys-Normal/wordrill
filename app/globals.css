@@ -1027,6 +1027,25 @@ h1 {
   line-height: 1;
 }
 
+.roomBadges {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+}
+
+.roomMentionBadge {
+  width: 22px;
+  height: 22px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 999px;
+  background: var(--accent-soft);
+  color: var(--accent);
+  font-size: 0.82rem;
+  font-weight: 900;
+}
+
 .roomCreateModal {
   width: min(440px, 100%);
 }
@@ -1278,10 +1297,72 @@ h1 {
   white-space: pre-wrap;
 }
 
+.messageMention {
+  border-radius: 4px;
+  background: var(--accent-soft);
+  color: var(--accent-strong);
+  padding: 1px 3px;
+  font-weight: 800;
+}
+
 .messageForm {
   border-top: 1px solid var(--line);
   padding: 10px;
   background: var(--panel);
+}
+
+.messageComposer {
+  position: relative;
+  min-width: 0;
+}
+
+.messageComposer > input {
+  width: 100%;
+}
+
+.mentionSuggestions {
+  position: absolute;
+  z-index: 20;
+  left: 0;
+  right: 0;
+  bottom: calc(100% + 8px);
+  max-height: 260px;
+  display: grid;
+  gap: 3px;
+  margin: 0;
+  padding: 6px;
+  overflow-y: auto;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: var(--panel);
+  box-shadow: 0 16px 36px rgb(15 23 42 / 22%);
+  list-style: none;
+}
+
+.mentionSuggestions button {
+  width: 100%;
+  min-height: 44px;
+  display: grid;
+  grid-template-columns: 32px minmax(0, 1fr);
+  align-items: center;
+  gap: 9px;
+  border-color: transparent;
+  background: transparent;
+  color: var(--ink);
+  padding: 6px 8px;
+  text-align: left;
+}
+
+.mentionSuggestions button:hover,
+.mentionSuggestions .activeMentionSuggestion {
+  background: var(--accent-soft);
+  color: var(--accent-strong);
+}
+
+.mentionSuggestions .userAvatar {
+  width: 32px;
+  height: 32px;
+  font-size: 0.76rem;
 }
 
 .settingsShell {

@@ -34,17 +34,20 @@ export async function listRoomSummaries(userId: string) {
   });
 
   return sortRoomSummaries(
-    await Promise.all(memberships.map(async (membership) => (
-      serializeRoomSummary(
-        membership.room,
-        await countUnreadRoomMessages({
-          joinedAt: membership.createdAt,
-          lastReadAt: membership.lastReadAt,
-          roomId: membership.room.id,
-          userId
-        })
-      )
-    )))
+    await Promise.all(memberships.map(async (membership) => {
+      const unreadInput = {
+        joinedAt: membership.createdAt,
+        lastReadAt: membership.lastReadAt,
+        roomId: membership.room.id,
+        userId
+      };
+      const [unreadCount, mentionCount] = await Promise.all([
+        countUnreadRoomMessages(unreadInput),
+        countUnreadRoomMentions(unreadInput)
+      ]);
+
+      return serializeRoomSummary(membership.room, unreadCount, mentionCount);
+    }))
   );
 }
 
@@ -68,18 +71,23 @@ export async function getRoomSummaryWithMemberIds(roomId: string) {
   }
 
   return {
-    summaries: await Promise.all(room.members.map(async (member) => ({
-      summary: serializeRoomSummary(
-        room,
-        await countUnreadRoomMessages({
-          joinedAt: member.createdAt,
-          lastReadAt: member.lastReadAt,
-          roomId: room.id,
-          userId: member.userId
-        })
-      ),
-      userId: member.userId
-    })))
+    summaries: await Promise.all(room.members.map(async (member) => {
+      const unreadInput = {
+        joinedAt: member.createdAt,
+        lastReadAt: member.lastReadAt,
+        roomId: room.id,
+        userId: member.userId
+      };
+      const [unreadCount, mentionCount] = await Promise.all([
+        countUnreadRoomMessages(unreadInput),
+        countUnreadRoomMentions(unreadInput)
+      ]);
+
+      return {
+        summary: serializeRoomSummary(room, unreadCount, mentionCount),
+        userId: member.userId
+      };
+    }))
   };
 }
 
@@ -94,7 +102,7 @@ function serializeRoomSummary(room: {
     text: string;
   }>;
   _count: { messages: number };
-}, unreadCount: number): RoomSummary {
+}, unreadCount: number, mentionCount: number): RoomSummary {
   const lastMessage = room.messages[0] || null;
 
   return {
@@ -107,11 +115,36 @@ function serializeRoomSummary(room: {
         }
       : null,
     messageCount: room._count.messages,
+    mentionCount,
     name: room.name,
     slug: room.slug,
     unreadCount,
     updatedAt: room.updatedAt.toISOString()
   };
+}
+
+function countUnreadRoomMentions({
+  joinedAt,
+  lastReadAt,
+  roomId,
+  userId
+}: {
+  joinedAt: Date;
+  lastReadAt: Date | null;
+  roomId: string;
+  userId: string;
+}) {
+  const unreadAfter = lastReadAt && lastReadAt > joinedAt ? lastReadAt : joinedAt;
+
+  return prisma.messageMention.count({
+    where: {
+      mentionedUserId: userId,
+      message: {
+        roomId,
+        createdAt: { gt: unreadAfter }
+      }
+    }
+  });
 }
 
 function countUnreadRoomMessages({

@@ -48,6 +48,7 @@ export async function POST(request: Request) {
       id: room.id,
       lastMessage: null,
       messageCount: 0,
+      mentionCount: 0,
       name: room.name,
       slug: room.slug,
       unreadCount: 0,
