@@ -13,6 +13,14 @@
 - Write the subject in Korean, keeping it concise and focused on the completed change.
 - Examples: `feat: 채팅방 검색 기능 추가`, `docs: 로컬 실행 방법 정리`, `fix: 메시지 중복 전송 오류 수정`.
 
+## Cross-session continuity
+
+- Record ongoing work, planned work, important decisions, and unresolved blockers in project files so another session can continue without relying on conversation history.
+- Use `docs/roadmap.md` as the source of truth for project phases, completion status, priorities, and the next recommended task.
+- Update `docs/roadmap.md` whenever a planned item is added, completed, deferred, or materially changed.
+- Keep implementation-specific plans and handoff notes under `docs/`; do not place session handoff or agent working notes in `README.md`.
+- Before starting a new project phase, read `docs/roadmap.md` and relevant documents linked from it.
+
 ## Development server verification
 
 - Determine how the development server runs from the repository configuration before inspecting open ports.
