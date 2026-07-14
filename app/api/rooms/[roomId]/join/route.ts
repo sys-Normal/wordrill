@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { auth } from "../../../../../auth";
+import { authorizeRoomAction } from "../../../../../lib/room-authorization";
 import { prisma } from "../../../../../lib/prisma";
 import { emitRoomListUpdate } from "../../../../../lib/room-list-events";
 import { getSessionUser } from "../../../../../lib/session-user";
@@ -17,23 +18,21 @@ export async function POST(_request: Request, context: RouteContext) {
   }
 
   const { roomId } = await context.params;
-  const room = await prisma.room.findFirst({
-    where: {
-      OR: [
-        { id: roomId },
-        { slug: roomId }
-      ]
-    },
-    select: {
-      id: true,
-      name: true,
-      slug: true
-    }
+  const authorization = await authorizeRoomAction({
+    action: "join",
+    roomId,
+    userId: user.id
   });
 
-  if (!room) {
+  if (!authorization.ok && authorization.code === "ROOM_NOT_FOUND") {
     return NextResponse.json({ error: "Room not found" }, { status: 404 });
   }
+
+  if (!authorization.ok) {
+    return NextResponse.json({ error: "Forbidden" }, { status: 403 });
+  }
+
+  const { room } = authorization;
 
   await prisma.roomMember.upsert({
     where: {

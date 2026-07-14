@@ -131,6 +131,16 @@ function emitWithAck(socket, event, payload, timeoutMs = 10000) {
   });
 }
 
+function emitAckResult(socket, event, payload, timeoutMs = 10000) {
+  return new Promise((resolve, reject) => {
+    const timeout = setTimeout(() => reject(new Error(`${event} acknowledgement timed out`)), timeoutMs);
+    socket.emit(event, payload, (result) => {
+      clearTimeout(timeout);
+      resolve(result);
+    });
+  });
+}
+
 const sockets = [];
 const roomIds = [];
 
@@ -154,15 +164,60 @@ try {
     createTicket(tester1.jar),
     createTicket(tester2.jar)
   ]);
-  const listSocket = io(baseUrl, { forceNew: true, transports: ["websocket"] });
-  const chatSocket = io(baseUrl, { forceNew: true, transports: ["websocket"] });
+  const unauthorizedSocket = io(baseUrl, {
+    forceNew: true,
+    transports: ["websocket"]
+  });
+  sockets.push(unauthorizedSocket);
+  const connectionError = await waitForEvent(unauthorizedSocket, "connect_error");
+
+  if (connectionError?.data?.code !== "UNAUTHORIZED") {
+    throw new Error("Socket connection without a signed ticket was not rejected");
+  }
+
+  unauthorizedSocket.disconnect();
+
+  const tamperedSocket = io(baseUrl, {
+    auth: { ticket: `${tester1Ticket}x` },
+    forceNew: true,
+    transports: ["websocket"]
+  });
+  sockets.push(tamperedSocket);
+  const tamperedConnectionError = await waitForEvent(tamperedSocket, "connect_error");
+
+  if (tamperedConnectionError?.data?.code !== "UNAUTHORIZED") {
+    throw new Error("Socket connection with a tampered ticket was not rejected");
+  }
+
+  tamperedSocket.disconnect();
+
+  const listSocket = io(baseUrl, {
+    auth: { ticket: tester2Ticket },
+    forceNew: true,
+    transports: ["websocket"]
+  });
+  const chatSocket = io(baseUrl, {
+    auth: { ticket: tester1Ticket },
+    forceNew: true,
+    transports: ["websocket"]
+  });
   sockets.push(listSocket, chatSocket);
 
   await Promise.all([
     waitForEvent(listSocket, "connect"),
     waitForEvent(chatSocket, "connect")
   ]);
-  await emitWithAck(listSocket, "rooms:subscribe", { ticket: tester2Ticket });
+  await emitWithAck(listSocket, "rooms:subscribe", {});
+  await emitWithAck(chatSocket, "users:subscribe", {});
+
+  const forbiddenJoin = await emitAckResult(listSocket, "user:join", {
+    nickname: "Tester 2",
+    roomId
+  });
+
+  if (forbiddenJoin?.ok || forbiddenJoin?.code !== "FORBIDDEN") {
+    throw new Error("Non-member socket was not rejected from the room");
+  }
 
   const createdUpdatePromise = waitForEvent(listSocket, "room:updated");
   const createdResponse = await request(tester2.jar, "/api/rooms", {
@@ -190,13 +245,20 @@ try {
   }
 
   const senderHistoryPromise = waitForEvent(chatSocket, "chat:history");
+  const senderReadyPromise = waitForEvent(chatSocket, "user:ready");
   await emitWithAck(chatSocket, "user:join", {
-    email: tester1.session.user.email,
     nickname: "Tester 1",
     roomId,
-    userId: tester1.session.user.id
+    userId: tester2.session.user.id
   });
-  const senderHistory = await senderHistoryPromise;
+  const [senderHistory, senderReady] = await Promise.all([
+    senderHistoryPromise,
+    senderReadyPromise
+  ]);
+
+  if (senderReady.id !== tester1.session.user.id) {
+    throw new Error("Socket join trusted an impersonated user ID from the client payload");
+  }
 
   if (!Array.isArray(senderHistory.messages) || senderHistory.messages.length > 50) {
     throw new Error("Chat history did not respect the configured 50-message limit");
@@ -256,16 +318,18 @@ try {
     throw new Error("Room list API was not sorted by latest message descending");
   }
 
-  const readerSocket = io(baseUrl, { forceNew: true, transports: ["websocket"] });
+  const readerSocket = io(baseUrl, {
+    auth: { ticket: tester2Ticket },
+    forceNew: true,
+    transports: ["websocket"]
+  });
   sockets.push(readerSocket);
   await waitForEvent(readerSocket, "connect");
   const readerHistoryPromise = waitForEvent(readerSocket, "chat:history");
   const readerJoinUpdatePromise = waitForEvent(listSocket, "room:updated");
   await emitWithAck(readerSocket, "user:join", {
-    email: tester2.session.user.email,
     nickname: "Tester 2",
-    roomId,
-    userId: tester2.session.user.id
+    roomId
   });
   const [readerHistory] = await Promise.all([
     readerHistoryPromise,
@@ -318,10 +382,8 @@ try {
 
   const pagedHistoryPromise = waitForEvent(chatSocket, "chat:history");
   await emitWithAck(chatSocket, "user:join", {
-    email: tester1.session.user.email,
     nickname: "Tester 1",
-    roomId,
-    userId: tester1.session.user.id
+    roomId
   });
   const pagedHistory = await pagedHistoryPromise;
 
@@ -356,12 +418,15 @@ try {
     lastMessageCreatedAt: update.lastMessage.createdAt,
     messageCount: update.messageCount,
     idempotentMessageCount,
+    impersonationRejected: senderReady.id === tester1.session.user.id,
     mentionAfterRead: readUpdate.mentionCount,
     mentionBeforeRead: update.mentionCount,
     unreadAfterRead: readUpdate.unreadCount,
     unreadBeforeRead: update.unreadCount,
     historyPageSize: pagedHistory.messages.length,
     olderHistoryPageSize: olderHistory.messages.length,
+    tamperedTicketRejected: tamperedConnectionError?.data?.code === "UNAUTHORIZED",
+    unauthorizedConnectionRejected: connectionError?.data?.code === "UNAUTHORIZED",
     ok: true
   }));
 } finally {

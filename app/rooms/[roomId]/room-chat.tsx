@@ -6,7 +6,7 @@ import Link from "next/link";
 import { ArrowLeft } from "lucide-react";
 import { signIn, signOut, useSession } from "next-auth/react";
 import type { Socket } from "socket.io-client";
-import { io } from "socket.io-client";
+import { createAuthenticatedSocket } from "../../../lib/authenticated-socket";
 import {
   browserStorageKeys,
   getSessionStorageItem,
@@ -116,7 +116,6 @@ export default function RoomChat({ initialRoom }: RoomChatProps) {
   const [historyError, setHistoryError] = useState("");
   const [presence, setPresence] = useState<Presence>({ count: 0, users: [] });
   const [profileLoaded, setProfileLoaded] = useState(false);
-  const [profileUserId, setProfileUserId] = useState<string | null>(null);
   const [loginIdentifier, setLoginIdentifier] = useState("");
   const [loginPassword, setLoginPassword] = useState("");
   const [loginError, setLoginError] = useState("");
@@ -126,8 +125,6 @@ export default function RoomChat({ initialRoom }: RoomChatProps) {
   const [socketConnected, setSocketConnected] = useState(false);
   const isAuthenticated = status === "authenticated";
   const sessionName = session?.user?.name || session?.user?.email || "";
-  const activeUserId = profileUserId || session?.user?.id || null;
-  const activeUserEmail = session?.user?.email || null;
 
   const visiblePresence = useMemo<Presence>(() => {
     const uniqueUsers = new Map<string, User>();
@@ -179,7 +176,7 @@ export default function RoomChat({ initialRoom }: RoomChatProps) {
       return null;
     }
 
-    return io({ autoConnect: false });
+    return createAuthenticatedSocket();
   }, []);
 
   useEffect(() => {
@@ -242,6 +239,11 @@ export default function RoomChat({ initialRoom }: RoomChatProps) {
 
     socketRef.current = socket;
     socket.on("connect", handleConnect);
+    socket.on("connect_error", () => {
+      setSocketConnected(false);
+      setJoined(false);
+      setJoinError("실시간 서버 인증에 실패했습니다. 로그인 상태를 다시 확인해주세요.");
+    });
     socket.on("disconnect", handleDisconnect);
     socket.on("user:ready", handleUserReady);
     socket.on("chat:history", handleChatHistory);
@@ -396,7 +398,6 @@ export default function RoomChat({ initialRoom }: RoomChatProps) {
     fetch("/api/profile")
       .then((response) => response.json())
       .then((data) => {
-        const nextUserId = data.user?.id || session?.user?.id || null;
         const savedNickname = normalizeNickname(data.user?.nickname);
         const storedNickname = normalizeNickname(
           getSessionStorageItem(browserStorageKeys.session.chat.lastNickname)
@@ -408,11 +409,8 @@ export default function RoomChat({ initialRoom }: RoomChatProps) {
           setNickname(nextNickname);
         }
 
-        setProfileUserId(nextUserId);
       })
-      .catch(() => {
-        setProfileUserId(session?.user?.id || null);
-      })
+      .catch(() => undefined)
       .finally(() => setProfileLoaded(true));
   }, [session?.user?.id, sessionName, status]);
 
@@ -424,16 +422,13 @@ export default function RoomChat({ initialRoom }: RoomChatProps) {
       !profileLoaded ||
       joined ||
       !nickname ||
-      !roomId ||
-      (!activeUserId && !activeUserEmail)
+      !roomId
     ) {
       return;
     }
 
     joinSocketRoom();
   }, [
-    activeUserEmail,
-    activeUserId,
     isAuthenticated,
     joined,
     nickname,
@@ -463,10 +458,8 @@ export default function RoomChat({ initialRoom }: RoomChatProps) {
       setRoomName(data.room?.name || "Chat room");
 
       socketRef.current?.emit("user:join", {
-        email: activeUserEmail,
         nickname,
-        roomId: joinedRoomId,
-        userId: activeUserId
+        roomId: joinedRoomId
       }, (result: AckResult) => {
         if (result?.ok) {
           setSessionStorageItem(
@@ -488,11 +481,6 @@ export default function RoomChat({ initialRoom }: RoomChatProps) {
   function joinRoom(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     setJoinError("");
-
-    if (!activeUserId && !activeUserEmail) {
-      setJoinError("로그인 정보를 다시 확인해주세요.");
-      return;
-    }
 
     if (!socketRef.current?.connected) {
       socketRef.current?.connect();

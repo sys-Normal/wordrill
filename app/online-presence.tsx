@@ -9,7 +9,8 @@ import {
   useState
 } from "react";
 import { useSession } from "next-auth/react";
-import { io, type Socket } from "socket.io-client";
+import type { Socket } from "socket.io-client";
+import { createAuthenticatedSocket } from "../lib/authenticated-socket";
 
 export type OnlineDirectoryUser = {
   id: string;
@@ -30,7 +31,7 @@ const OnlinePresenceContext = createContext<OnlinePresenceValue>({
 });
 
 export function OnlinePresenceProvider({ children }: { children: ReactNode }) {
-  const { data: session, status } = useSession();
+  const { status } = useSession();
   const [connected, setConnected] = useState(false);
   const [users, setUsers] = useState<OnlineDirectoryUser[]>([]);
 
@@ -41,14 +42,12 @@ export function OnlinePresenceProvider({ children }: { children: ReactNode }) {
       return;
     }
 
-    const socket: Socket = io();
+    const socket: Socket = createAuthenticatedSocket();
 
     function subscribe() {
-      socket.emit("users:subscribe", {
-        email: session?.user?.email,
-        userId: session?.user?.id
+      socket.emit("users:subscribe", {}, (result: { ok?: boolean }) => {
+        setConnected(Boolean(result?.ok));
       });
-      setConnected(true);
     }
 
     function handleOnlineUsers(payload: {
@@ -59,13 +58,15 @@ export function OnlinePresenceProvider({ children }: { children: ReactNode }) {
     }
 
     socket.on("connect", subscribe);
+    socket.on("connect_error", () => setConnected(false));
     socket.on("disconnect", () => setConnected(false));
     socket.on("users:online", handleOnlineUsers);
+    socket.connect();
 
     return () => {
       socket.disconnect();
     };
-  }, [session?.user?.email, session?.user?.id, status]);
+  }, [status]);
 
   const value = useMemo(
     () => ({ connected, count: users.length, users }),

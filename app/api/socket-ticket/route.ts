@@ -1,14 +1,15 @@
 import { NextResponse } from "next/server";
 import { auth } from "../../../auth";
+import { getSessionUser } from "../../../lib/session-user";
 import { createSocketTicket } from "../../../lib/socket-ticket";
 
 export async function POST() {
   const session = await auth();
-  const userId = session?.user?.id;
+  const user = await getSessionUser(session);
 
-  if (!userId) {
+  if (!user) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
 
-  return NextResponse.json({ ticket: createSocketTicket(userId) });
+  return NextResponse.json({ ticket: createSocketTicket(user.id) });
 }

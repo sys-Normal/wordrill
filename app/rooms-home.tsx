@@ -6,7 +6,8 @@ import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { signIn, signOut, useSession } from "next-auth/react";
 import { Home, Settings2, Trash2 } from "lucide-react";
-import { io, type Socket } from "socket.io-client";
+import type { Socket } from "socket.io-client";
+import { createAuthenticatedSocket } from "../lib/authenticated-socket";
 import {
   browserStorageKeys,
   removeSessionStorageItem
@@ -118,45 +119,27 @@ export default function RoomsHome({ screen }: RoomsHomeProps) {
       return;
     }
 
-    const socket: Socket = io({ autoConnect: false });
+    const socket: Socket = createAuthenticatedSocket();
     let active = true;
     let hasConnected = false;
 
-    async function subscribeToRoomUpdates() {
+    function subscribeToRoomUpdates() {
       const isReconnect = hasConnected;
       hasConnected = true;
 
-      try {
-        const response = await fetch("/api/socket-ticket", { method: "POST" });
-
-        if (!response.ok) {
-          throw new Error("Failed to create socket ticket.");
-        }
-
-        const data = await response.json();
-
-        if (!active || !socket.connected) {
-          return;
-        }
-
-        socket.emit(
-          "rooms:subscribe",
-          { ticket: data.ticket },
-          (result: { ok?: boolean; error?: string }) => {
-            if (!result?.ok && active) {
-              setRoomError(result?.error || "채팅방 실시간 갱신을 연결하지 못했습니다.");
-            }
+      socket.emit(
+        "rooms:subscribe",
+        {},
+        (result: { ok?: boolean; error?: string }) => {
+          if (!result?.ok && active) {
+            setRoomError(result?.error || "채팅방 실시간 갱신을 연결하지 못했습니다.");
           }
-        );
 
-        if (isReconnect) {
-          await loadRooms();
+          if (result?.ok && isReconnect) {
+            void loadRooms();
+          }
         }
-      } catch {
-        if (active) {
-          setRoomError("채팅방 실시간 갱신을 연결하지 못했습니다.");
-        }
-      }
+      );
     }
 
     function handleRoomUpdated(room: RoomSummary) {
@@ -175,6 +158,11 @@ export default function RoomsHome({ screen }: RoomsHomeProps) {
     }
 
     socket.on("connect", subscribeToRoomUpdates);
+    socket.on("connect_error", () => {
+      if (active) {
+        setRoomError("채팅방 실시간 갱신 인증에 실패했습니다.");
+      }
+    });
     socket.on("room:updated", handleRoomUpdated);
     socket.connect();
     document.addEventListener("visibilitychange", refreshVisibleRoomList);

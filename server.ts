@@ -2,6 +2,7 @@ import http from "node:http";
 import { loadEnvConfig } from "@next/env";
 import { Prisma } from "@prisma/client";
 import next from "next";
+import { authorizeRoomAction } from "./lib/room-authorization";
 import { prisma } from "./lib/prisma";
 import {
   emitRoomListUpdate,
@@ -52,19 +53,15 @@ type ChatHistoryBeforePayload = {
 };
 
 type JoinPayload = {
-  email?: string;
   nickname?: string;
   roomId?: string;
-  userId?: string;
 };
 
-type OnlineSubscribePayload = {
-  email?: string;
-  userId?: string;
-};
-
-type RoomsSubscribePayload = {
-  ticket?: string;
+type AuthenticatedUser = {
+  email: string | null;
+  id: string;
+  name: string | null;
+  nickname: string | null;
 };
 
 type ReadPayload = {
@@ -95,6 +92,7 @@ type SocketSession = {
 };
 
 type AckResult = {
+  code?: SocketErrorCode;
   ok: boolean;
   error?: string;
   messageId?: string;
@@ -111,6 +109,13 @@ type AckCallback = (result: AckResult) => void;
 type HistoryAckCallback = (result: AckResult & Partial<ChatHistoryPayload>) => void;
 
 type StoredMessage = Prisma.MessageGetPayload<{ include: { mentions: true } }>;
+
+type SocketErrorCode =
+  | "FORBIDDEN"
+  | "INTERNAL_ERROR"
+  | "INVALID_REQUEST"
+  | "NOT_FOUND"
+  | "UNAUTHORIZED";
 
 const dev = process.env.NODE_ENV !== "production";
 loadEnvConfig(process.cwd(), dev);
@@ -144,33 +149,47 @@ app.prepare().then(() => {
   });
 
   const io = new Server(server);
+  io.use(async (socket, next) => {
+    try {
+      const ticket = verifySocketTicket(socket.handshake.auth?.ticket);
+
+      if (!ticket) {
+        next(createSocketConnectionError("UNAUTHORIZED", "Socket authentication is required."));
+        return;
+      }
+
+      const user = await prisma.user.findUnique({
+        where: { id: ticket.sub },
+        select: {
+          email: true,
+          id: true,
+          name: true,
+          nickname: true
+        }
+      });
+
+      if (!user) {
+        next(createSocketConnectionError("UNAUTHORIZED", "Socket user was not found."));
+        return;
+      }
+
+      socket.data.authenticatedUser = user;
+      next();
+    } catch (error) {
+      console.error("Failed to authenticate socket connection", error);
+      next(createSocketConnectionError("INTERNAL_ERROR", "Socket authentication failed."));
+    }
+  });
   setRoomListSocketServer(io);
 
   io.on("connection", async (socket: Socket) => {
+    const authenticatedUser = getAuthenticatedUser(socket);
+
     socket.on(
       "users:subscribe",
-      async (payload: OnlineSubscribePayload, ack?: AckCallback) => {
-        const email = normalizeEmail(payload?.email);
-        const userId = normalizeId(payload?.userId);
-
-        if (!userId && !email) {
-          if (typeof ack === "function") {
-            ack({ ok: false, error: "Signed-in user is required." });
-          }
-          return;
-        }
-
-        const dbUser = await findJoinUser({ email, userId });
-
-        if (!dbUser) {
-          if (typeof ack === "function") {
-            ack({ ok: false, error: "Signed-in user was not found." });
-          }
-          return;
-        }
-
-        const nickname = formatMemberNickname(dbUser);
-        registerOnlineUser(socket.id, dbUser.id, nickname);
+      async (_payload: unknown, ack?: AckCallback) => {
+        const nickname = formatMemberNickname(authenticatedUser);
+        registerOnlineUser(socket.id, authenticatedUser.id, nickname);
         socket.join(ONLINE_USERS_CHANNEL);
         emitOnlineUsers(io);
 
@@ -182,30 +201,9 @@ app.prepare().then(() => {
 
     socket.on(
       "rooms:subscribe",
-      async (payload: RoomsSubscribePayload, ack?: AckCallback) => {
+      async (_payload: unknown, ack?: AckCallback) => {
         try {
-          const ticket = verifySocketTicket(payload?.ticket);
-
-          if (!ticket) {
-            if (typeof ack === "function") {
-              ack({ ok: false, error: "Room list subscription is unauthorized." });
-            }
-            return;
-          }
-
-          const user = await prisma.user.findUnique({
-            where: { id: ticket.sub },
-            select: { id: true }
-          });
-
-          if (!user) {
-            if (typeof ack === "function") {
-              ack({ ok: false, error: "Signed-in user was not found." });
-            }
-            return;
-          }
-
-          socket.join(getRoomListChannel(user.id));
+          socket.join(getRoomListChannel(authenticatedUser.id));
 
           if (typeof ack === "function") {
             ack({ ok: true });
@@ -214,124 +212,122 @@ app.prepare().then(() => {
           console.error("Failed to subscribe to room list updates", error);
 
           if (typeof ack === "function") {
-            ack({ ok: false, error: "Room list subscription failed." });
+            ack(socketError("INTERNAL_ERROR", "Room list subscription failed."));
           }
         }
       }
     );
 
     socket.on("user:join", async (payload: JoinPayload, ack?: AckCallback) => {
-      const email = normalizeEmail(payload?.email);
-      const roomId = normalizeId(payload?.roomId);
-      const userId = normalizeId(payload?.userId);
-
-      if ((!userId && !email) || !roomId) {
-        if (typeof ack === "function") {
-          ack({ ok: false, error: "Signed-in user and room are required." });
-        }
-        return;
-      }
-
-      const dbUser = await findJoinUser({ email, userId });
-      const room = await findRoom(roomId);
-
-      if (!dbUser) {
-        if (typeof ack === "function") {
-          ack({ ok: false, error: "Signed-in user was not found." });
-        }
-        return;
-      }
-
-      if (!room) {
-        if (typeof ack === "function") {
-          ack({ ok: false, error: "Chat room was not found." });
-        }
-        return;
-      }
-
-      const membership = await findRoomMembership({
-        roomId: room.id,
-        userId: dbUser.id
-      });
-
-      if (!membership) {
-        if (typeof ack === "function") {
-          ack({ ok: false, error: "Join the chat room before connecting." });
-        }
-        return;
-      }
-
-      const cleanName = normalizeNickname(
-        payload?.nickname || dbUser.nickname || dbUser.name || dbUser.email
-      );
-
-      await prisma.user.update({
-        where: { id: dbUser.id },
-        data: { nickname: cleanName }
-      });
-
-      registerOnlineUser(socket.id, dbUser.id, cleanName);
-      emitOnlineUsers(io);
-
-      removeSocketFromPresence(io, socket.id);
-
-      socket.join(room.id);
-
-      const roomUsers = getRoomPresence(room.id);
-      const existingOnlineUser = roomUsers.get(dbUser.id);
-      if (existingOnlineUser) {
-        existingOnlineUser.nickname = cleanName;
-        existingOnlineUser.sockets.add(socket.id);
-      } else {
-        roomUsers.set(dbUser.id, {
-          nickname: cleanName,
-          sockets: new Set([socket.id]),
-          userId: dbUser.id
-        });
-      }
-
-      socketSessions.set(socket.id, {
-        roomId: room.id,
-        userId: dbUser.id
-      });
-      socket.emit("user:ready", {
-        id: dbUser.id,
-        nickname: cleanName
-      });
-
-      await emitPresence(io, room.id);
-      void emitRoomListUpdate(room.id, io).catch((error) => {
-        console.error("Failed to update room list after joining", error);
-      });
-
       try {
-        const history: ChatHistoryPayload = {
-          ...(await loadMessagePage(room.id)),
-          lastReadAt: membership.lastReadAt?.toISOString() || null,
-          lastReadSequence: membership.lastReadSequence?.toString() || null
-        };
-        socket.emit("chat:history", history);
-      } catch (error) {
-        console.error("Failed to load chat history", error);
-        socket.emit("chat:history", {
-          cursor: null,
-          hasMore: false,
-          lastReadAt: null,
-          lastReadSequence: null,
-          messages: []
-        });
-      }
+        const roomId = normalizeId(payload?.roomId);
 
-      if (typeof ack === "function") {
-        ack({
-          ok: true,
-          nickname: cleanName,
-          room: {
-            id: room.id,
-            name: room.name,
-            slug: room.slug
+        if (!roomId) {
+          if (typeof ack === "function") {
+            ack(socketError("INVALID_REQUEST", "Room is required."));
           }
+          return;
+        }
+
+        const authorization = await authorizeRoomAction({
+          action: "read",
+          roomId,
+          userId: authenticatedUser.id
         });
+
+        if (!authorization.ok) {
+          if (typeof ack === "function") {
+            ack(roomAuthorizationError(authorization.code));
+          }
+          return;
+        }
+
+        const { membership, room } = authorization;
+
+        if (!membership) {
+          ack?.(socketError("FORBIDDEN", "Join the chat room before connecting."));
+          return;
+        }
+
+        const cleanName = normalizeNickname(
+          payload?.nickname ||
+          authenticatedUser.nickname ||
+          authenticatedUser.name ||
+          authenticatedUser.email
+        );
+
+        await prisma.user.update({
+          where: { id: authenticatedUser.id },
+          data: { nickname: cleanName }
+        });
+        authenticatedUser.nickname = cleanName;
+
+        registerOnlineUser(socket.id, authenticatedUser.id, cleanName);
+        emitOnlineUsers(io);
+
+        removeSocketFromPresence(io, socket.id);
+
+        socket.join(room.id);
+
+        const roomUsers = getRoomPresence(room.id);
+        const existingOnlineUser = roomUsers.get(authenticatedUser.id);
+        if (existingOnlineUser) {
+          existingOnlineUser.nickname = cleanName;
+          existingOnlineUser.sockets.add(socket.id);
+        } else {
+          roomUsers.set(authenticatedUser.id, {
+            nickname: cleanName,
+            sockets: new Set([socket.id]),
+            userId: authenticatedUser.id
+          });
+        }
+
+        socketSessions.set(socket.id, {
+          roomId: room.id,
+          userId: authenticatedUser.id
+        });
+        socket.emit("user:ready", {
+          id: authenticatedUser.id,
+          nickname: cleanName
+        });
+
+        await emitPresence(io, room.id);
+        void emitRoomListUpdate(room.id, io).catch((error) => {
+          console.error("Failed to update room list after joining", error);
+        });
+
+        try {
+          const history: ChatHistoryPayload = {
+            ...(await loadMessagePage(room.id)),
+            lastReadAt: membership.lastReadAt?.toISOString() || null,
+            lastReadSequence: membership.lastReadSequence?.toString() || null
+          };
+          socket.emit("chat:history", history);
+        } catch (error) {
+          console.error("Failed to load chat history", error);
+          socket.emit("chat:history", {
+            cursor: null,
+            hasMore: false,
+            lastReadAt: null,
+            lastReadSequence: null,
+            messages: []
+          });
+        }
+
+        if (typeof ack === "function") {
+          ack({
+            ok: true,
+            nickname: cleanName,
+            room: {
+              id: room.id,
+              name: room.name,
+              slug: room.slug
+            }
+          });
+        }
+      } catch (error) {
+        console.error("Failed to join socket room", error);
+        ack?.(socketError("INTERNAL_ERROR", "Chat room connection failed."));
       }
     });
 
@@ -341,45 +337,75 @@ app.prepare().then(() => {
         const session = socketSessions.get(socket.id);
         const cursor = normalizeSequenceCursor(payload?.cursor);
 
-        if (!session || cursor === null) {
-          if (typeof ack === "function") {
-            ack({ ok: false, error: "A valid history cursor and joined room are required." });
-          }
+        if (cursor === null) {
+          ack?.(socketError("INVALID_REQUEST", "A valid history cursor is required."));
+          return;
+        }
+
+        if (!session || session.userId !== authenticatedUser.id) {
+          ack?.(socketError("UNAUTHORIZED", "Join the room before loading history."));
           return;
         }
 
         try {
+          const authorization = await authorizeRoomAction({
+            action: "read",
+            roomId: session.roomId,
+            userId: authenticatedUser.id
+          });
+
+          if (!authorization.ok) {
+            ack?.(roomAuthorizationError(authorization.code));
+            return;
+          }
+
           ack?.({
             ok: true,
             ...(await loadMessagePage(session.roomId, cursor))
           });
         } catch (error) {
           console.error("Failed to load older chat history", error);
-          ack?.({ ok: false, error: "Older messages could not be loaded." });
+          ack?.(socketError("INTERNAL_ERROR", "Older messages could not be loaded."));
         }
       }
     );
 
     socket.on("chat:message", async (payload: ChatPayload, ack?: AckCallback) => {
       const session = socketSessions.get(socket.id);
-      const user = session ? getRoomPresence(session.roomId).get(session.userId) : null;
       const text = normalizeMessage(payload && payload.text);
       const clientMessageId = normalizeClientMessageId(payload?.clientMessageId);
 
-      if (!session || !user || !text || !clientMessageId) {
-        if (typeof ack === "function") {
-          ack({ ok: false, error: "Message, client message ID, and joined user are required." });
-        }
+      if (!text || !clientMessageId) {
+        ack?.(socketError("INVALID_REQUEST", "Message and client message ID are required."));
+        return;
+      }
+
+      if (!session || session.userId !== authenticatedUser.id) {
+        ack?.(socketError("UNAUTHORIZED", "Join the room before sending messages."));
         return;
       }
 
       try {
+        const authorization = await authorizeRoomAction({
+          action: "write",
+          roomId: session.roomId,
+          userId: authenticatedUser.id
+        });
+
+        if (!authorization.ok) {
+          ack?.(roomAuthorizationError(authorization.code));
+          return;
+        }
+
+        const roomUser = getRoomPresence(session.roomId).get(authenticatedUser.id);
+        const nickname = roomUser?.nickname || formatMemberNickname(authenticatedUser);
+
         const message = await saveChatMessage({
           clientMessageId,
           mentions: payload?.mentions,
           roomId: session.roomId,
-          userId: user.userId,
-          nickname: user.nickname,
+          userId: authenticatedUser.id,
+          nickname,
           text
         });
 
@@ -395,7 +421,7 @@ app.prepare().then(() => {
         console.error("Failed to save chat message", error);
 
         if (typeof ack === "function") {
-          ack({ ok: false, error: "Message could not be saved." });
+          ack(socketError("INTERNAL_ERROR", "Message could not be saved."));
         }
       }
     });
@@ -404,33 +430,47 @@ app.prepare().then(() => {
       const session = socketSessions.get(socket.id);
       const messageId = normalizeId(payload?.messageId);
 
-      if (!session || !messageId) {
-        if (typeof ack === "function") {
-          ack({ ok: false, error: "Message and joined room are required." });
-        }
+      if (!messageId) {
+        ack?.(socketError("INVALID_REQUEST", "Message is required."));
         return;
       }
 
-      const message = await prisma.message.findFirst({
-        where: {
-          id: messageId,
-          roomId: session.roomId
-        },
-        select: { createdAt: true, sequence: true }
-      });
-
-      if (!message) {
-        if (typeof ack === "function") {
-          ack({ ok: false, error: "Message was not found in this room." });
-        }
+      if (!session || session.userId !== authenticatedUser.id) {
+        ack?.(socketError("UNAUTHORIZED", "Join the room before updating read state."));
         return;
       }
 
       try {
+        const authorization = await authorizeRoomAction({
+          action: "read",
+          roomId: session.roomId,
+          userId: authenticatedUser.id
+        });
+
+        if (!authorization.ok) {
+          ack?.(roomAuthorizationError(authorization.code));
+          return;
+        }
+
+        const message = await prisma.message.findFirst({
+          where: {
+            id: messageId,
+            roomId: session.roomId
+          },
+          select: { createdAt: true, sequence: true }
+        });
+
+        if (!message) {
+          if (typeof ack === "function") {
+            ack(socketError("NOT_FOUND", "Message was not found in this room."));
+          }
+          return;
+        }
+
         const result = await prisma.roomMember.updateMany({
           where: {
             roomId: session.roomId,
-            userId: session.userId,
+            userId: authenticatedUser.id,
             OR: [
               { lastReadSequence: null },
               { lastReadSequence: { lt: message.sequence } }
@@ -459,7 +499,7 @@ app.prepare().then(() => {
         console.error("Failed to update message read state", error);
 
         if (typeof ack === "function") {
-          ack({ ok: false, error: "Read state could not be updated." });
+          ack(socketError("INTERNAL_ERROR", "Read state could not be updated."));
         }
       }
     });
@@ -656,11 +696,6 @@ function normalizeMessage(value: unknown) {
   return String(value || "").trim().slice(0, 500);
 }
 
-function normalizeEmail(value: unknown) {
-  const email = String(value || "").trim().toLowerCase();
-  return email.includes("@") ? email : null;
-}
-
 function normalizeId(value: unknown) {
   return String(value || "").trim() || null;
 }
@@ -685,33 +720,30 @@ function normalizeSequenceCursor(value: unknown) {
   }
 }
 
-function findJoinUser({ email, userId }: { email: string | null; userId: string | null }) {
-  if (userId) {
-    return prisma.user.findFirst({
-      where: {
-        OR: [
-          { id: userId },
-          ...(email ? [{ email }] : [])
-        ]
-      },
-      select: {
-        email: true,
-        id: true,
-        name: true,
-        nickname: true
-      }
-    });
+function getAuthenticatedUser(socket: Socket): AuthenticatedUser {
+  const user = socket.data.authenticatedUser as AuthenticatedUser | undefined;
+
+  if (!user) {
+    throw new Error("Socket middleware did not attach an authenticated user.");
   }
 
-  return prisma.user.findUnique({
-    where: { email: email || "" },
-    select: {
-      email: true,
-      id: true,
-      name: true,
-      nickname: true
-    }
-  });
+  return user;
+}
+
+function createSocketConnectionError(code: SocketErrorCode, message: string) {
+  const error = new Error(message) as Error & { data: { code: SocketErrorCode } };
+  error.data = { code };
+  return error;
+}
+
+function socketError(code: SocketErrorCode, error: string): AckResult {
+  return { code, error, ok: false };
+}
+
+function roomAuthorizationError(code: "FORBIDDEN" | "ROOM_NOT_FOUND") {
+  return code === "ROOM_NOT_FOUND"
+    ? socketError("NOT_FOUND", "Chat room was not found.")
+    : socketError("FORBIDDEN", "Room membership is required for this action.");
 }
 
 function formatMemberNickname(user: {
@@ -723,28 +755,6 @@ function formatMemberNickname(user: {
     .trim()
     .replace(/\s+/g, " ")
     .slice(0, 24);
-}
-
-function findRoom(roomId: string) {
-  return prisma.room.findUnique({
-    where: { id: roomId },
-    select: {
-      id: true,
-      name: true,
-      slug: true
-    }
-  });
-}
-
-function findRoomMembership({ roomId, userId }: { roomId: string; userId: string }) {
-  return prisma.roomMember.findUnique({
-    where: {
-      userId_roomId: {
-        roomId,
-        userId
-      }
-    }
-  });
 }
 
 async function loadMessagePage(roomId: string, beforeSequence?: bigint): Promise<ChatMessagePage> {

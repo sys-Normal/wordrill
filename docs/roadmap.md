@@ -39,23 +39,28 @@
 
 관련 문서: [`database-operations.md`](database-operations.md)
 
-### 2. Socket 인증과 권한 검증 강화 — 다음 작업
+### 2. Socket 인증과 권한 검증 강화 — 완료
 
-- `user:join` 등 Socket.IO 이벤트에서 클라이언트가 전달한 `userId`나 이메일을 사용자 신원의 근거로 신뢰하지 않는다.
-- 서버 세션 또는 짧은 수명의 서명된 Socket 티켓으로 연결 사용자를 확정한다.
-- 방 입장, 기록 읽기, 메시지 쓰기, 읽음 갱신 권한을 서버에서 각각 검사한다.
-- HTTP API와 Socket.IO가 같은 공용 권한 판정 로직을 사용하게 한다.
-- 인증 실패, 만료, 권한 부족에 대한 이벤트 오류 형식을 통일한다.
+- `/api/socket-ticket`이 실제 DB 사용자를 확인한 뒤 2분 동안 유효한 HMAC 서명 티켓을 발급한다.
+- Socket.IO 핸드셰이크 미들웨어가 티켓을 검증하고 인증 사용자를 연결에 고정한다.
+- `users:subscribe`, `rooms:subscribe`, `user:join`이 클라이언트의 사용자 ID나 이메일을 신원 근거로 사용하지 않는다.
+- 방 입장, 기록 읽기, 메시지 쓰기, 읽음 갱신마다 DB 멤버십을 검사한다.
+- HTTP 방 가입 API와 Socket.IO가 `authorizeRoomAction` 공용 권한 함수를 사용한다.
+- 인증·권한 실패 응답에 `UNAUTHORIZED`, `FORBIDDEN`, `NOT_FOUND`, `INVALID_REQUEST`, `INTERNAL_ERROR` 코드를 사용한다.
+- 무티켓 연결, 변조 티켓, 비회원 입장, 사용자 ID 위조, 정상 채팅 흐름을 통합 테스트로 검증했다.
+
+현재 티켓은 짧은 수명의 전달자 자격 증명이다. 일회성 `jti` 소비와 즉시 로그아웃·차단 전파는 Redis 기반 세션 상태를 도입할 때 확장한다.
 
 관련 기획: [`product-plan.md`](product-plan.md)
 
-### 3. Redis 도입 — 대기
+### 3. Redis 도입 — 다음 작업
 
 - PostgreSQL을 교체하지 않고 별도 인프라로 추가한다.
 - Socket.IO Redis Adapter를 적용해 여러 서버 사이의 방 이벤트를 전달한다.
 - 현재 프로세스 메모리의 온라인 사용자와 방 presence 상태를 Redis 기반으로 전환한다.
 - Redis 장애 시 메시지 영구 데이터는 PostgreSQL에서 복구할 수 있어야 한다.
 - 단일 서버 MVP에서도 적용 가능한 구성을 만들되, Redis 장애가 메시지 저장을 훼손하지 않도록 역할을 분리한다.
+- 필요하면 Socket 티켓 `jti`를 일회성으로 소비하고 로그아웃·차단 상태를 연결에 전파한다.
 
 ### 4. 공용 API·이벤트 타입 분리 — 대기
 
@@ -99,16 +104,15 @@
 
 ## 우선순위
 
-1. Socket 인증과 공용 권한 계층
-2. Redis와 다중 서버 실시간 상태
-3. 공용 API·이벤트 계약
-4. 운영 배포·백업·로그
-5. 웹 MVP 범위 확정 및 버전 태그
-6. 같은 백엔드를 사용하는 모바일 앱
+1. Redis와 다중 서버 실시간 상태
+2. 공용 API·이벤트 계약
+3. 운영 배포·백업·로그
+4. 웹 MVP 범위 확정 및 버전 태그
+5. 같은 백엔드를 사용하는 모바일 앱
 
 ## 현재 다음 작업
 
-Socket.IO 연결과 `user:join` 흐름에서 사용자 신원을 서버가 발급한 티켓으로 검증하도록 설계하고, 모든 채팅 이벤트에 공용 방 권한 검사를 적용한다.
+PostgreSQL을 영구 저장소로 유지하면서 Socket.IO Redis Adapter와 Redis 기반 presence를 도입한다. Redis 장애가 메시지 저장을 훼손하지 않도록 실시간 상태와 영구 데이터를 분리한다.
 
 ## 이번 단계에서 하지 않는 작업
 
