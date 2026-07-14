@@ -1,31 +1,44 @@
-# Project Working Rules
+# 프로젝트 작업 규칙
 
-## Documentation boundaries
+## 문서 역할 구분
 
-- Keep repository working rules and agent instructions in `AGENTS.md`.
-- Keep the root `README.md` focused on the project itself: its purpose, features, setup, usage, architecture, and current limitations.
-- Do not add agent behavior, verification procedures, or repository working conventions to `README.md`.
+- 저장소 작업 규칙과 에이전트 지침은 `AGENTS.md`에 기록한다.
+- 루트 `README.md`에는 프로젝트 목적, 기능, 설정, 사용법, 구조, 현재 제한사항 등 프로젝트 자체에 관한 설명만 작성한다.
+- 에이전트 행동 규칙, 검증 절차, 저장소 작업 관례는 `README.md`에 추가하지 않는다.
 
-## Commit messages
+## 문서 작성 언어
 
-- Follow the Conventional Commits-style format `<type>: <subject>`.
-- Keep the type prefix in English and choose it based on the change, such as `feat`, `fix`, `docs`, `chore`, `refactor`, `test`, `style`, `perf`, `build`, or `ci`.
-- Write the subject in Korean, keeping it concise and focused on the completed change.
-- Examples: `feat: 채팅방 검색 기능 추가`, `docs: 로컬 실행 방법 정리`, `fix: 메시지 중복 전송 오류 수정`.
+- 프로젝트 문서와 작업 규칙에서 한글로 자연스럽게 표현할 수 있는 설명은 한글로 작성한다.
+- 고유명사, 제품명, 기술명, 파일 경로, 명령어, 환경변수, API 및 이벤트 이름, 코드 식별자와 변수명은 원문을 유지한다.
+- 원문을 유지해야 의미가 정확한 용어는 억지로 번역하지 않고, 필요하면 한글 설명을 함께 제공한다.
 
-## Cross-session continuity
+## 커밋 메시지
 
-- Record ongoing work, planned work, important decisions, and unresolved blockers in project files so another session can continue without relying on conversation history.
-- Use `docs/roadmap.md` as the source of truth for project phases, completion status, priorities, and the next recommended task.
-- Update `docs/roadmap.md` whenever a planned item is added, completed, deferred, or materially changed.
-- Keep implementation-specific plans and handoff notes under `docs/`; do not place session handoff or agent working notes in `README.md`.
-- Before starting a new project phase, read `docs/roadmap.md` and relevant documents linked from it.
+- Conventional Commits 형식인 `<type>: <subject>`를 따른다.
+- `type` 접두사는 영어로 유지하고 작업 성격에 따라 `feat`, `fix`, `docs`, `chore`, `refactor`, `test`, `style`, `perf`, `build`, `ci` 등을 사용한다.
+- `subject`는 완료된 변경 내용을 중심으로 간결한 한글로 작성한다.
+- 예시: `feat: 채팅방 검색 기능 추가`, `docs: 로컬 실행 방법 정리`, `fix: 메시지 중복 전송 오류 수정`.
 
-## Development server verification
+## 세션 간 작업 연속성
 
-- Determine how the development server runs from the repository configuration before inspecting open ports.
-- Start with the root `package.json` and follow the `scripts.dev` command to its actual entry point.
-- Inspect that entry point, relevant environment files, and documented defaults to determine the configured port.
-- Use port/process inspection and HTTP requests only afterward, to verify that the configured server is running.
-- Never identify an HTTP service as this project solely because it responds on a common port such as `3000`.
-- If the configured port is already occupied, verify which process owns it and report that the attempted new server did not start.
+- 다른 세션이 대화 기록에 의존하지 않고 작업을 이어갈 수 있도록 진행 중인 작업, 계획된 작업, 중요한 결정, 해결되지 않은 차단 요소를 프로젝트 파일에 기록한다.
+- 프로젝트 단계, 완료 상태, 우선순위, 다음 권장 작업의 기준 문서로 `docs/roadmap.md`를 사용한다.
+- 계획 항목이 추가·완료·보류되거나 중요하게 변경될 때마다 `docs/roadmap.md`를 갱신한다.
+- 구현 계획과 인계 기록은 `docs/` 아래에 작성하고, 세션 인계나 에이전트 작업 기록은 `README.md`에 작성하지 않는다.
+- 새 프로젝트 단계를 시작하기 전에 `docs/roadmap.md`와 문서에서 연결하는 관련 자료를 읽는다.
+
+## 커밋 인계
+
+- 완료된 작업을 커밋하기 전에 같은 변경 범위의 관련 프로젝트 문서를 갱신한다.
+- 사용자가 커밋을 요청하면 먼저 완료된 로드맵 항목을 완료 처리하고, 구현 내용, 검증 방법, 남은 제한사항, 다음 권장 작업을 기록한다.
+- 사용자가 별도 커밋을 명시적으로 요청하지 않는 한 구현과 문서 변경을 같은 커밋에 포함한다.
+- 커밋된 작업 설명이나 다음 작업 판단을 대화 기록에만 의존하지 않는다.
+
+## 개발 서버 확인
+
+- 열려 있는 포트를 조사하기 전에 저장소 설정에서 개발 서버 실행 방식을 확인한다.
+- 루트 `package.json`부터 확인하고 `scripts.dev` 명령을 실제 실행 진입점까지 추적한다.
+- 실행 진입점, 관련 환경 파일, 문서화된 기본값을 확인해 설정된 포트를 판단한다.
+- 그다음에만 포트·프로세스 조사와 HTTP 요청을 사용해 설정된 서버가 실행 중인지 검증한다.
+- `3000` 같은 일반적인 포트에서 HTTP 응답이 온다는 이유만으로 해당 서비스를 이 프로젝트로 판단하지 않는다.
+- 설정된 포트가 이미 사용 중이면 점유 프로세스를 확인하고 새 서버 실행이 실패했다는 사실을 보고한다.
