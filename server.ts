@@ -1,5 +1,6 @@
 import http from "node:http";
 import { loadEnvConfig } from "@next/env";
+import { Prisma } from "@prisma/client";
 import next from "next";
 import { prisma } from "./lib/prisma";
 import {
@@ -8,10 +9,12 @@ import {
   setRoomListSocketServer
 } from "./lib/room-list-events";
 import { verifySocketTicket } from "./lib/socket-ticket";
+import { loadMessageUnreadCounts } from "./lib/unread-counts";
 import { Server, type Socket } from "socket.io";
 
 type ChatMessage = {
   id: string;
+  sequence: string;
   userId: string;
   nickname: string;
   text: string;
@@ -28,14 +31,24 @@ type MessageMentionRange = {
 };
 
 type ChatPayload = {
+  clientMessageId?: string;
   mentions?: Array<Partial<MessageMentionRange>>;
   roomId?: string;
   text?: string;
 };
 
 type ChatHistoryPayload = {
+  cursor: string | null;
+  hasMore: boolean;
   lastReadAt: string | null;
+  lastReadSequence: string | null;
   messages: ChatMessage[];
+};
+
+type ChatMessagePage = Omit<ChatHistoryPayload, "lastReadAt" | "lastReadSequence">;
+
+type ChatHistoryBeforePayload = {
+  cursor?: string;
 };
 
 type JoinPayload = {
@@ -84,6 +97,7 @@ type SocketSession = {
 type AckResult = {
   ok: boolean;
   error?: string;
+  messageId?: string;
   nickname?: string;
   room?: {
     id: string;
@@ -93,6 +107,10 @@ type AckResult = {
 };
 
 type AckCallback = (result: AckResult) => void;
+
+type HistoryAckCallback = (result: AckResult & Partial<ChatHistoryPayload>) => void;
+
+type StoredMessage = Prisma.MessageGetPayload<{ include: { mentions: true } }>;
 
 const dev = process.env.NODE_ENV !== "production";
 loadEnvConfig(process.cwd(), dev);
@@ -288,13 +306,20 @@ app.prepare().then(() => {
 
       try {
         const history: ChatHistoryPayload = {
+          ...(await loadMessagePage(room.id)),
           lastReadAt: membership.lastReadAt?.toISOString() || null,
-          messages: await loadRecentMessages(room.id)
+          lastReadSequence: membership.lastReadSequence?.toString() || null
         };
         socket.emit("chat:history", history);
       } catch (error) {
         console.error("Failed to load chat history", error);
-        socket.emit("chat:history", { lastReadAt: null, messages: [] });
+        socket.emit("chat:history", {
+          cursor: null,
+          hasMore: false,
+          lastReadAt: null,
+          lastReadSequence: null,
+          messages: []
+        });
       }
 
       if (typeof ack === "function") {
@@ -310,20 +335,47 @@ app.prepare().then(() => {
       }
     });
 
+    socket.on(
+      "chat:history:before",
+      async (payload: ChatHistoryBeforePayload, ack?: HistoryAckCallback) => {
+        const session = socketSessions.get(socket.id);
+        const cursor = normalizeSequenceCursor(payload?.cursor);
+
+        if (!session || cursor === null) {
+          if (typeof ack === "function") {
+            ack({ ok: false, error: "A valid history cursor and joined room are required." });
+          }
+          return;
+        }
+
+        try {
+          ack?.({
+            ok: true,
+            ...(await loadMessagePage(session.roomId, cursor))
+          });
+        } catch (error) {
+          console.error("Failed to load older chat history", error);
+          ack?.({ ok: false, error: "Older messages could not be loaded." });
+        }
+      }
+    );
+
     socket.on("chat:message", async (payload: ChatPayload, ack?: AckCallback) => {
       const session = socketSessions.get(socket.id);
       const user = session ? getRoomPresence(session.roomId).get(session.userId) : null;
       const text = normalizeMessage(payload && payload.text);
+      const clientMessageId = normalizeClientMessageId(payload?.clientMessageId);
 
-      if (!session || !user || !text) {
+      if (!session || !user || !text || !clientMessageId) {
         if (typeof ack === "function") {
-          ack({ ok: false, error: "Message is empty or user has not joined." });
+          ack({ ok: false, error: "Message, client message ID, and joined user are required." });
         }
         return;
       }
 
       try {
         const message = await saveChatMessage({
+          clientMessageId,
           mentions: payload?.mentions,
           roomId: session.roomId,
           userId: user.userId,
@@ -337,7 +389,7 @@ app.prepare().then(() => {
         });
 
         if (typeof ack === "function") {
-          ack({ ok: true });
+          ack({ ok: true, messageId: message.id });
         }
       } catch (error) {
         console.error("Failed to save chat message", error);
@@ -364,7 +416,7 @@ app.prepare().then(() => {
           id: messageId,
           roomId: session.roomId
         },
-        select: { createdAt: true }
+        select: { createdAt: true, sequence: true }
       });
 
       if (!message) {
@@ -380,11 +432,14 @@ app.prepare().then(() => {
             roomId: session.roomId,
             userId: session.userId,
             OR: [
-              { lastReadAt: null },
-              { lastReadAt: { lt: message.createdAt } }
+              { lastReadSequence: null },
+              { lastReadSequence: { lt: message.sequence } }
             ]
           },
-          data: { lastReadAt: message.createdAt }
+          data: {
+            lastReadAt: message.createdAt,
+            lastReadSequence: message.sequence
+          }
         });
 
         if (result.count > 0) {
@@ -610,6 +665,26 @@ function normalizeId(value: unknown) {
   return String(value || "").trim() || null;
 }
 
+function normalizeClientMessageId(value: unknown) {
+  const clientMessageId = String(value || "").trim();
+  return /^[A-Za-z0-9_-]{16,100}$/.test(clientMessageId) ? clientMessageId : null;
+}
+
+function normalizeSequenceCursor(value: unknown) {
+  const cursor = String(value || "").trim();
+
+  if (!/^\d+$/.test(cursor)) {
+    return null;
+  }
+
+  try {
+    const sequence = BigInt(cursor);
+    return sequence > BigInt(0) ? sequence : null;
+  } catch {
+    return null;
+  }
+}
+
 function findJoinUser({ email, userId }: { email: string | null; userId: string | null }) {
   if (userId) {
     return prisma.user.findFirst({
@@ -672,116 +747,136 @@ function findRoomMembership({ roomId, userId }: { roomId: string; userId: string
   });
 }
 
-async function loadRecentMessages(roomId: string): Promise<ChatMessage[]> {
-  const [rows, members] = await prisma.$transaction([
-    prisma.message.findMany({
-      where: { roomId },
-      orderBy: { createdAt: "desc" },
-      include: {
-        mentions: {
-          orderBy: { start: "asc" }
-        }
-      },
-      take: MAX_HISTORY
-    }),
-    prisma.roomMember.findMany({
-      where: { roomId },
-      select: {
-        createdAt: true,
-        lastReadAt: true,
-        userId: true
+async function loadMessagePage(roomId: string, beforeSequence?: bigint): Promise<ChatMessagePage> {
+  const rows = await prisma.message.findMany({
+    where: {
+      roomId,
+      ...(beforeSequence ? { sequence: { lt: beforeSequence } } : {})
+    },
+    orderBy: { sequence: "desc" },
+    include: {
+      mentions: {
+        orderBy: { start: "asc" }
       }
-    })
-  ]);
+    },
+    take: MAX_HISTORY + 1
+  });
+  const hasMore = rows.length > MAX_HISTORY;
+  const pageRows = rows.slice(0, MAX_HISTORY);
+  const oldestRow = pageRows[pageRows.length - 1];
 
-  return rows.reverse().map((message) => ({
-    id: message.id,
-    userId: message.userId || "",
-    nickname: message.nickname,
-    text: message.text,
-    createdAt: message.createdAt.toISOString(),
-    mentions: message.mentions.map((mention) => ({
-      end: mention.end,
-      label: mention.label,
-      start: mention.start,
-      userId: mention.mentionedUserId
-    })),
-    unreadCount: countUnreadMembers(message, members)
-  }));
+  return {
+    cursor: hasMore && oldestRow ? oldestRow.sequence.toString() : null,
+    hasMore,
+    messages: await serializeStoredMessages([...pageRows].reverse())
+  };
 }
 
 async function loadUnreadCountUpdates(roomId: string): Promise<ReadCountUpdate[]> {
-  const messages = await loadRecentMessages(roomId);
+  const { messages } = await loadMessagePage(roomId);
 
   return messages.map(({ id, unreadCount }) => ({ id, unreadCount }));
 }
 
-function countUnreadMembers(
-  message: { createdAt: Date; userId: string | null },
-  members: Array<{ createdAt: Date; lastReadAt: Date | null; userId: string }>
-) {
-  return members.filter((member) => (
-    member.userId !== message.userId &&
-    member.createdAt <= message.createdAt &&
-    (!member.lastReadAt || member.lastReadAt < message.createdAt)
-  )).length;
-}
-
 async function saveChatMessage({
+  clientMessageId,
   mentions: mentionInputs,
   roomId,
   userId,
   nickname,
   text
 }: {
+  clientMessageId: string;
   mentions?: Array<Partial<MessageMentionRange>>;
   roomId: string;
   userId: string;
   nickname: string;
   text: string;
 }): Promise<ChatMessage> {
+  const existingMessage = await findStoredMessage(clientMessageId);
+
+  if (existingMessage) {
+    assertMatchingIdempotentMessage(existingMessage, roomId, userId);
+    return (await serializeStoredMessages([existingMessage]))[0];
+  }
+
   const mentions = await validateMessageMentions({
     mentions: mentionInputs,
     roomId,
     text
   });
-  const message = await prisma.message.create({
-    data: {
-      roomId,
-      userId,
-      nickname,
-      text,
-      mentions: mentions.length
-        ? {
-            create: mentions.map((mention) => ({
-              end: mention.end,
-              label: mention.label,
-              mentionedUserId: mention.userId,
-              start: mention.start
-            }))
-          }
-        : undefined
-    },
+  let message: StoredMessage;
+
+  try {
+    message = await prisma.message.create({
+      data: {
+        clientMessageId,
+        roomId,
+        userId,
+        nickname,
+        text,
+        mentions: mentions.length
+          ? {
+              create: mentions.map((mention) => ({
+                end: mention.end,
+                label: mention.label,
+                mentionedUserId: mention.userId,
+                start: mention.start
+              }))
+            }
+          : undefined
+      },
+      include: {
+        mentions: {
+          orderBy: { start: "asc" }
+        }
+      }
+    });
+  } catch (error) {
+    if (!(error instanceof Prisma.PrismaClientKnownRequestError) || error.code !== "P2002") {
+      throw error;
+    }
+
+    const duplicateMessage = await findStoredMessage(clientMessageId);
+
+    if (!duplicateMessage) {
+      throw error;
+    }
+
+    assertMatchingIdempotentMessage(duplicateMessage, roomId, userId);
+    message = duplicateMessage;
+  }
+
+  return (await serializeStoredMessages([message]))[0];
+}
+
+function findStoredMessage(clientMessageId: string) {
+  return prisma.message.findUnique({
+    where: { clientMessageId },
     include: {
       mentions: {
         orderBy: { start: "asc" }
       }
     }
   });
-  const unreadCount = await prisma.roomMember.count({
-    where: {
-      roomId,
-      userId: { not: userId },
-      createdAt: { lte: message.createdAt },
-      OR: [
-        { lastReadAt: null },
-        { lastReadAt: { lt: message.createdAt } }
-      ]
-    }
-  });
+}
 
-  return {
+function assertMatchingIdempotentMessage(
+  message: { roomId: string | null; userId: string | null },
+  roomId: string,
+  userId: string
+) {
+  if (message.roomId !== roomId || message.userId !== userId) {
+    throw new Error("Client message ID is already assigned to another message.");
+  }
+}
+
+async function serializeStoredMessages(messages: StoredMessage[]): Promise<ChatMessage[]> {
+  const unreadCounts = await loadMessageUnreadCounts(messages.map((message) => message.id));
+
+  return messages.map((message) => ({
     id: message.id,
+    sequence: message.sequence.toString(),
     userId: message.userId || "",
     nickname: message.nickname,
     text: message.text,
@@ -792,8 +887,8 @@ async function saveChatMessage({
       start: mention.start,
       userId: mention.mentionedUserId
     })),
-    unreadCount
-  };
+    unreadCount: unreadCounts.get(message.id) || 0
+  }));
 }
 
 async function validateMessageMentions({

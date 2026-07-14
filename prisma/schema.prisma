@@ -35,13 +35,14 @@ model Room {
 }
 
 model RoomMember {
-  id        String   @id @default(cuid())
-  userId    String
-  roomId    String
-  createdAt DateTime @default(now())
-  lastReadAt DateTime?
-  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
-  room      Room     @relation(fields: [roomId], references: [id], onDelete: Cascade)
+  id               String   @id @default(cuid())
+  userId           String
+  roomId           String
+  createdAt        DateTime @default(now())
+  lastReadAt       DateTime?
+  lastReadSequence BigInt?
+  user             User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  room             Room     @relation(fields: [roomId], references: [id], onDelete: Cascade)
 
   @@unique([userId, roomId])
   @@index([roomId])
@@ -49,18 +50,21 @@ model RoomMember {
 }
 
 model Message {
-  id        String   @id @default(cuid())
-  text      String
-  nickname  String
-  userId    String?
-  roomId    String?
-  createdAt DateTime @default(now())
-  user      User?    @relation(fields: [userId], references: [id], onDelete: SetNull)
-  room      Room?    @relation(fields: [roomId], references: [id], onDelete: SetNull)
-  mentions  MessageMention[]
+  id              String   @id @default(cuid())
+  clientMessageId String?  @unique
+  sequence        BigInt   @unique @default(autoincrement())
+  text            String
+  nickname        String
+  userId          String?
+  roomId          String?
+  createdAt       DateTime @default(now())
+  user            User?    @relation(fields: [userId], references: [id], onDelete: SetNull)
+  room            Room?    @relation(fields: [roomId], references: [id], onDelete: SetNull)
+  mentions        MessageMention[]
 
   @@index([createdAt])
   @@index([roomId, createdAt])
+  @@index([roomId, sequence])
   @@index([userId])
 }
 
@@ -77,5 +81,6 @@ model MessageMention {
 
   @@unique([messageId, start, end])
   @@index([mentionedUserId, createdAt])
+  @@index([mentionedUserId, messageId])
   @@index([messageId])
 }

@@ -1209,6 +1209,22 @@ h1 {
   list-style: none;
 }
 
+.historyLoader {
+  align-self: center;
+  display: grid;
+  justify-items: center;
+  gap: 6px;
+  color: var(--muted);
+  font-size: 0.82rem;
+}
+
+.historyLoader button {
+  min-height: 32px;
+  background: var(--panel);
+  color: var(--accent-strong);
+  padding: 0 10px;
+}
+
 .message {
   align-self: flex-start;
   min-width: 0;
@@ -1309,6 +1325,12 @@ h1 {
   border-top: 1px solid var(--line);
   padding: 10px;
   background: var(--panel);
+}
+
+.messageSendError {
+  margin: -6px 10px 8px;
+  color: var(--danger);
+  font-size: 0.82rem;
 }
 
 .messageComposer {

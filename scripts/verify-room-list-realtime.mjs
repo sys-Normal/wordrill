@@ -205,13 +205,9 @@ try {
   const mentionLabel = "Tester 2";
   const mentionToken = `@${mentionLabel}`;
   const messageText = `${mentionToken} room-list-update-${Date.now()}`;
-  const updatePromise = waitForMatchingEvent(
-    listSocket,
-    "room:updated",
-    (payload) => payload.id === roomId && payload.lastMessage?.text === messageText
-  );
-  const sentMessagePromise = waitForEvent(chatSocket, "chat:message");
-  await emitWithAck(chatSocket, "chat:message", {
+  const clientMessageId = crypto.randomUUID();
+  const messagePayload = {
+    clientMessageId,
     roomId,
     text: messageText,
     mentions: [{
@@ -220,8 +216,24 @@ try {
       start: 0,
       userId: tester2.session.user.id
     }]
-  });
+  };
+  const updatePromise = waitForMatchingEvent(
+    listSocket,
+    "room:updated",
+    (payload) => payload.id === roomId && payload.lastMessage?.text === messageText
+  );
+  const sentMessagePromise = waitForEvent(chatSocket, "chat:message");
+  await emitWithAck(chatSocket, "chat:message", messagePayload);
   const [update, sentMessage] = await Promise.all([updatePromise, sentMessagePromise]);
+  await emitWithAck(chatSocket, "chat:message", messagePayload);
+  const idempotentMessageCount = await prisma.message.count({
+    where: { clientMessageId }
+  });
+
+  if (idempotentMessageCount !== 1) {
+    throw new Error("Retrying the same client message ID created a duplicate message");
+  }
+
   const roomsResponse = await request(tester2.jar, "/api/rooms");
   const rooms = (await roomsResponse.json()).rooms;
 
@@ -293,16 +305,63 @@ try {
     throw new Error("Reading the latest message did not clear unread and mention counts");
   }
 
+  const paginationPrefix = `pagination-${Date.now()}`;
+  await prisma.message.createMany({
+    data: Array.from({ length: 55 }, (_, index) => ({
+      clientMessageId: `${paginationPrefix}-${String(index).padStart(2, "0")}`,
+      nickname: "Tester 1",
+      roomId,
+      text: `pagination message ${index + 1}`,
+      userId: tester1.session.user.id
+    }))
+  });
+
+  const pagedHistoryPromise = waitForEvent(chatSocket, "chat:history");
+  await emitWithAck(chatSocket, "user:join", {
+    email: tester1.session.user.email,
+    nickname: "Tester 1",
+    roomId,
+    userId: tester1.session.user.id
+  });
+  const pagedHistory = await pagedHistoryPromise;
+
+  if (
+    pagedHistory.messages.length !== 50 ||
+    !pagedHistory.hasMore ||
+    !pagedHistory.cursor ||
+    !isStrictlyOrdered(pagedHistory.messages)
+  ) {
+    throw new Error("Initial cursor history page was not ordered or bounded correctly");
+  }
+
+  const olderHistory = await emitWithAck(chatSocket, "chat:history:before", {
+    cursor: pagedHistory.cursor
+  });
+  const initialIds = new Set(pagedHistory.messages.map((message) => message.id));
+
+  if (
+    olderHistory.messages.length !== 6 ||
+    olderHistory.hasMore ||
+    olderHistory.cursor !== null ||
+    !isStrictlyOrdered(olderHistory.messages) ||
+    olderHistory.messages.some((message) => initialIds.has(message.id))
+  ) {
+    throw new Error("Older cursor history page overlapped or returned an invalid boundary");
+  }
+
   console.log(JSON.stringify({
     apiFirstRoom: rooms[0].id,
     createdRoomEvent: createdUpdate.id,
     eventRoom: update.id,
     lastMessageCreatedAt: update.lastMessage.createdAt,
     messageCount: update.messageCount,
+    idempotentMessageCount,
     mentionAfterRead: readUpdate.mentionCount,
     mentionBeforeRead: update.mentionCount,
     unreadAfterRead: readUpdate.unreadCount,
     unreadBeforeRead: update.unreadCount,
+    historyPageSize: pagedHistory.messages.length,
+    olderHistoryPageSize: olderHistory.messages.length,
     ok: true
   }));
 } finally {
@@ -315,4 +374,10 @@ try {
   }
 
   await prisma.$disconnect();
+}
+
+function isStrictlyOrdered(messages) {
+  return messages.every((message, index) => (
+    index === 0 || BigInt(messages[index - 1].sequence) < BigInt(message.sequence)
+  ));
 }

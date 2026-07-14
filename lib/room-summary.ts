@@ -3,6 +3,7 @@ import {
   type RoomSummary,
   sortRoomSummaries
 } from "./room-summary-types";
+import { loadMemberUnreadCounts, memberKey } from "./unread-counts";
 
 const roomSummarySelect = {
   id: true,
@@ -10,7 +11,7 @@ const roomSummarySelect = {
   slug: true,
   updatedAt: true,
   messages: {
-    orderBy: { createdAt: "desc" as const },
+    orderBy: { sequence: "desc" as const },
     select: {
       createdAt: true,
       nickname: true,
@@ -24,70 +25,61 @@ const roomSummarySelect = {
 };
 
 export async function listRoomSummaries(userId: string) {
-  const memberships = await prisma.roomMember.findMany({
-    where: { userId },
-    select: {
-      createdAt: true,
-      lastReadAt: true,
-      room: { select: roomSummarySelect }
-    }
-  });
+  const [memberships, unreadCounts] = await Promise.all([
+    prisma.roomMember.findMany({
+      where: { userId },
+      select: {
+        room: { select: roomSummarySelect }
+      }
+    }),
+    loadMemberUnreadCounts({ userId })
+  ]);
 
   return sortRoomSummaries(
-    await Promise.all(memberships.map(async (membership) => {
-      const unreadInput = {
-        joinedAt: membership.createdAt,
-        lastReadAt: membership.lastReadAt,
-        roomId: membership.room.id,
-        userId
-      };
-      const [unreadCount, mentionCount] = await Promise.all([
-        countUnreadRoomMessages(unreadInput),
-        countUnreadRoomMentions(unreadInput)
-      ]);
-
-      return serializeRoomSummary(membership.room, unreadCount, mentionCount);
-    }))
+    memberships.map((membership) => {
+      const counts = unreadCounts.get(memberKey(membership.room.id, userId));
+      return serializeRoomSummary(
+        membership.room,
+        counts?.unreadCount || 0,
+        counts?.mentionCount || 0
+      );
+    })
   );
 }
 
 export async function getRoomSummaryWithMemberIds(roomId: string) {
-  const room = await prisma.room.findUnique({
-    where: { id: roomId },
-    select: {
-      ...roomSummarySelect,
-      members: {
-        select: {
-          createdAt: true,
-          lastReadAt: true,
-          userId: true
+  const [room, unreadCounts] = await Promise.all([
+    prisma.room.findUnique({
+      where: { id: roomId },
+      select: {
+        ...roomSummarySelect,
+        members: {
+          select: {
+            userId: true
+          }
         }
       }
-    }
-  });
+    }),
+    loadMemberUnreadCounts({ roomId })
+  ]);
 
   if (!room) {
     return null;
   }
 
   return {
-    summaries: await Promise.all(room.members.map(async (member) => {
-      const unreadInput = {
-        joinedAt: member.createdAt,
-        lastReadAt: member.lastReadAt,
-        roomId: room.id,
-        userId: member.userId
-      };
-      const [unreadCount, mentionCount] = await Promise.all([
-        countUnreadRoomMessages(unreadInput),
-        countUnreadRoomMentions(unreadInput)
-      ]);
+    summaries: room.members.map((member) => {
+      const counts = unreadCounts.get(memberKey(room.id, member.userId));
 
       return {
-        summary: serializeRoomSummary(room, unreadCount, mentionCount),
+        summary: serializeRoomSummary(
+          room,
+          counts?.unreadCount || 0,
+          counts?.mentionCount || 0
+        ),
         userId: member.userId
       };
-    }))
+    })
   };
 }
 
@@ -121,50 +113,4 @@ function serializeRoomSummary(room: {
     unreadCount,
     updatedAt: room.updatedAt.toISOString()
   };
-}
-
-function countUnreadRoomMentions({
-  joinedAt,
-  lastReadAt,
-  roomId,
-  userId
-}: {
-  joinedAt: Date;
-  lastReadAt: Date | null;
-  roomId: string;
-  userId: string;
-}) {
-  const unreadAfter = lastReadAt && lastReadAt > joinedAt ? lastReadAt : joinedAt;
-
-  return prisma.messageMention.count({
-    where: {
-      mentionedUserId: userId,
-      message: {
-        roomId,
-        createdAt: { gt: unreadAfter }
-      }
-    }
-  });
-}
-
-function countUnreadRoomMessages({
-  joinedAt,
-  lastReadAt,
-  roomId,
-  userId
-}: {
-  joinedAt: Date;
-  lastReadAt: Date | null;
-  roomId: string;
-  userId: string;
-}) {
-  const unreadAfter = lastReadAt && lastReadAt > joinedAt ? lastReadAt : joinedAt;
-
-  return prisma.message.count({
-    where: {
-      roomId,
-      userId: { not: userId },
-      createdAt: { gt: unreadAfter }
-    }
-  });
 }

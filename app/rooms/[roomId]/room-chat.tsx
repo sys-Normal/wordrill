@@ -24,6 +24,7 @@ type User = {
 
 type ChatMessage = {
   id: string;
+  sequence: string;
   userId: string;
   nickname: string;
   text: string;
@@ -42,7 +43,10 @@ type MessageMentionRange = {
 type Message = { type: "chat" } & ChatMessage;
 
 type ChatHistoryPayload = {
+  cursor: string | null;
+  hasMore: boolean;
   lastReadAt: string | null;
+  lastReadSequence: string | null;
   messages: ChatMessage[];
 };
 
@@ -59,6 +63,7 @@ type Presence = {
 type AckResult = {
   ok: boolean;
   error?: string;
+  messageId?: string;
   nickname?: string;
   room?: {
     id: string;
@@ -66,6 +71,11 @@ type AckResult = {
     slug: string;
   };
 };
+
+type HistoryAckResult = AckResult & Partial<Pick<
+  ChatHistoryPayload,
+  "cursor" | "hasMore" | "messages"
+>>;
 
 type RoomChatProps = {
   initialRoom: {
@@ -82,8 +92,10 @@ export default function RoomChat({ initialRoom }: RoomChatProps) {
   const messagesRef = useRef<HTMLOListElement | null>(null);
   const hasInitialScrollRef = useRef(false);
   const initialLastReadAtRef = useRef<string | null>(null);
+  const initialLastReadSequenceRef = useRef<string | null>(null);
   const pendingInitialScrollRef = useRef(false);
   const pendingAutoScrollRef = useRef(false);
+  const pendingHistoryPrependRef = useRef<{ height: number; top: number } | null>(null);
   const shouldStickToBottomRef = useRef(true);
   const [roomName, setRoomName] = useState(initialRoom.name);
   const [nickname, setNickname] = useState("");
@@ -98,6 +110,10 @@ export default function RoomChat({ initialRoom }: RoomChatProps) {
   const [currentUserId, setCurrentUserId] = useState<string | null>(null);
   const [joined, setJoined] = useState(false);
   const [messages, setMessages] = useState<Message[]>([]);
+  const [historyCursor, setHistoryCursor] = useState<string | null>(null);
+  const [historyHasMore, setHistoryHasMore] = useState(false);
+  const [historyLoading, setHistoryLoading] = useState(false);
+  const [historyError, setHistoryError] = useState("");
   const [presence, setPresence] = useState<Presence>({ count: 0, users: [] });
   const [profileLoaded, setProfileLoaded] = useState(false);
   const [profileUserId, setProfileUserId] = useState<string | null>(null);
@@ -105,6 +121,8 @@ export default function RoomChat({ initialRoom }: RoomChatProps) {
   const [loginPassword, setLoginPassword] = useState("");
   const [loginError, setLoginError] = useState("");
   const [joinError, setJoinError] = useState("");
+  const [messageSending, setMessageSending] = useState(false);
+  const [sendError, setSendError] = useState("");
   const [socketConnected, setSocketConnected] = useState(false);
   const isAuthenticated = status === "authenticated";
   const sessionName = session?.user?.name || session?.user?.email || "";
@@ -186,6 +204,12 @@ export default function RoomChat({ initialRoom }: RoomChatProps) {
     const handleChatHistory = (history: ChatHistoryPayload | ChatMessage[]) => {
       const nextMessages = Array.isArray(history) ? history : history.messages;
       initialLastReadAtRef.current = Array.isArray(history) ? null : history.lastReadAt;
+      initialLastReadSequenceRef.current = Array.isArray(history)
+        ? null
+        : history.lastReadSequence;
+      setHistoryCursor(Array.isArray(history) ? null : history.cursor);
+      setHistoryHasMore(Array.isArray(history) ? false : history.hasMore);
+      setHistoryError("");
       pendingInitialScrollRef.current = true;
       hasInitialScrollRef.current = false;
       pendingAutoScrollRef.current = false;
@@ -199,7 +223,7 @@ export default function RoomChat({ initialRoom }: RoomChatProps) {
         }
 
         prepareForIncomingMessage();
-        return [...current, { type: "chat", ...message }];
+        return [...current, { type: "chat" as const, ...message }].sort(compareMessageSequence);
       });
     };
 
@@ -246,9 +270,21 @@ export default function RoomChat({ initialRoom }: RoomChatProps) {
       return;
     }
 
+    const prependPosition = pendingHistoryPrependRef.current;
+
+    if (prependPosition) {
+      const frameId = window.requestAnimationFrame(() => {
+        container.scrollTop = prependPosition.top + container.scrollHeight - prependPosition.height;
+        pendingHistoryPrependRef.current = null;
+      });
+
+      return () => window.cancelAnimationFrame(frameId);
+    }
+
     if (!hasInitialScrollRef.current && pendingInitialScrollRef.current) {
       const targetMessageId = findInitialReadPosition(
         messages,
+        initialLastReadSequenceRef.current,
         initialLastReadAtRef.current
       );
       const frameId = window.requestAnimationFrame(() => {
@@ -487,25 +523,87 @@ export default function RoomChat({ initialRoom }: RoomChatProps) {
     }
   }
 
-  function sendMessage(event: FormEvent<HTMLFormElement>) {
+  function loadOlderMessages() {
+    const socket = socketRef.current;
+    const container = messagesRef.current;
+
+    if (!socket?.connected || !historyCursor || historyLoading) {
+      return;
+    }
+
+    setHistoryLoading(true);
+    setHistoryError("");
+    pendingHistoryPrependRef.current = container
+      ? { height: container.scrollHeight, top: container.scrollTop }
+      : null;
+
+    socket.timeout(5000).emit(
+      "chat:history:before",
+      { cursor: historyCursor },
+      (error: Error | null, result?: HistoryAckResult) => {
+        setHistoryLoading(false);
+
+        if (error || !result?.ok || !result.messages) {
+          pendingHistoryPrependRef.current = null;
+          setHistoryError(result?.error || "이전 메시지를 불러오지 못했습니다.");
+          return;
+        }
+
+        setHistoryCursor(result.cursor || null);
+        setHistoryHasMore(Boolean(result.hasMore));
+        setMessages((current) => {
+          const currentIds = new Set(current.map((message) => message.id));
+          const olderMessages = result.messages
+            ?.filter((message) => !currentIds.has(message.id))
+            .map((message) => ({ type: "chat" as const, ...message })) || [];
+          if (olderMessages.length === 0) {
+            pendingHistoryPrependRef.current = null;
+            return current;
+          }
+
+          return [...olderMessages, ...current].sort(compareMessageSequence);
+        });
+      }
+    );
+  }
+
+  async function sendMessage(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     const text = draft.trim();
 
-    if (!text) {
+    if (!text || messageSending) {
       return;
     }
 
     prepareForIncomingMessage();
-
     const mentions = buildMentionRanges(text, selectedMentionUsers);
+    const socket = socketRef.current;
 
-    socketRef.current?.emit("chat:message", { roomId, text, mentions }, (result: AckResult) => {
-      if (result?.ok) {
-        setDraft("");
-        setMentionSearch(null);
-        setSelectedMentionUsers([]);
-      }
+    if (!socket?.connected) {
+      setSendError("서버 연결을 확인한 뒤 다시 시도해주세요.");
+      return;
+    }
+
+    setMessageSending(true);
+    setSendError("");
+
+    const result = await emitChatMessageWithRetry(socket, {
+      clientMessageId: crypto.randomUUID(),
+      mentions,
+      roomId,
+      text
     });
+
+    setMessageSending(false);
+
+    if (!result.ok) {
+      setSendError(result.error || "메시지를 전송하지 못했습니다.");
+      return;
+    }
+
+    setDraft("");
+    setMentionSearch(null);
+    setSelectedMentionUsers([]);
   }
 
   function updateDraft(event: ChangeEvent<HTMLInputElement>) {
@@ -703,6 +801,14 @@ export default function RoomChat({ initialRoom }: RoomChatProps) {
                 aria-live="polite"
                 onScroll={handleMessagesScroll}
               >
+                {historyHasMore ? (
+                  <li className="historyLoader">
+                    <button disabled={historyLoading} onClick={loadOlderMessages} type="button">
+                      {historyLoading ? "불러오는 중…" : "이전 메시지 불러오기"}
+                    </button>
+                    {historyError ? <span>{historyError}</span> : null}
+                  </li>
+                ) : null}
                 {messages.map((message, index) => {
                   const previousMessage = messages[index - 1];
                   const showDateDivider =
@@ -771,6 +877,7 @@ export default function RoomChat({ initialRoom }: RoomChatProps) {
                     maxLength={500}
                     autoComplete="off"
                     placeholder="메시지를 입력하세요 (@로 멘션)"
+                    disabled={messageSending}
                     value={draft}
                     onChange={updateDraft}
                     onClick={(event) => updateMentionSearch(
@@ -780,8 +887,11 @@ export default function RoomChat({ initialRoom }: RoomChatProps) {
                     onKeyDown={handleDraftKeyDown}
                   />
                 </div>
-                <button type="submit">Send</button>
+                <button disabled={messageSending} type="submit">
+                  {messageSending ? "Sending…" : "Send"}
+                </button>
               </form>
+              {sendError ? <p className="messageSendError">{sendError}</p> : null}
             </section>
           </div>
             )}
@@ -790,6 +900,44 @@ export default function RoomChat({ initialRoom }: RoomChatProps) {
       </section>
     </main>
   );
+}
+
+async function emitChatMessageWithRetry(
+  socket: Socket,
+  payload: {
+    clientMessageId: string;
+    mentions: MessageMentionRange[];
+    roomId: string;
+    text: string;
+  }
+) {
+  const maxAttempts = 3;
+
+  for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
+    const attemptResult = await new Promise<{
+      result: AckResult;
+      timedOut: boolean;
+    }>((resolve) => {
+      socket.timeout(5000).emit(
+        "chat:message",
+        payload,
+        (error: Error | null, ack?: AckResult) => {
+          resolve({
+            result: error
+              ? { ok: false, error: "메시지 저장 확인 시간이 초과되었습니다." }
+              : ack || { ok: false, error: "메시지 저장 결과가 없습니다." },
+            timedOut: Boolean(error)
+          });
+        }
+      );
+    });
+
+    if (!attemptResult.timedOut || attempt === maxAttempts) {
+      return attemptResult.result;
+    }
+  }
+
+  return { ok: false, error: "메시지를 전송하지 못했습니다." };
 }
 
 function buildMentionRanges(text: string, users: User[]): MessageMentionRange[] {
@@ -865,12 +1013,37 @@ function renderMessageText(message: Message) {
   return parts;
 }
 
-function findInitialReadPosition(messages: Message[], lastReadAt: string | null) {
-  if (!lastReadAt || messages.length === 0) {
+function findInitialReadPosition(
+  messages: Message[],
+  lastReadSequence: string | null,
+  lastReadAt: string | null
+) {
+  if ((!lastReadSequence && !lastReadAt) || messages.length === 0) {
     return null;
   }
 
-  const lastReadTime = new Date(lastReadAt).getTime();
+  if (lastReadSequence) {
+    const readSequence = BigInt(lastReadSequence);
+    const latestSequence = BigInt(messages[messages.length - 1].sequence);
+
+    if (readSequence >= latestSequence) {
+      return null;
+    }
+
+    let lastReadIndex = -1;
+
+    for (let index = 0; index < messages.length; index += 1) {
+      if (BigInt(messages[index].sequence) <= readSequence) {
+        lastReadIndex = index;
+      } else {
+        break;
+      }
+    }
+
+    return messages[Math.max(0, lastReadIndex)].id;
+  }
+
+  const lastReadTime = new Date(lastReadAt || 0).getTime();
   const latestMessageTime = new Date(messages[messages.length - 1].createdAt).getTime();
 
   if (lastReadTime >= latestMessageTime) {
@@ -880,14 +1053,20 @@ function findInitialReadPosition(messages: Message[], lastReadAt: string | null)
   let lastReadIndex = -1;
 
   for (let index = 0; index < messages.length; index += 1) {
-    if (new Date(messages[index].createdAt).getTime() <= lastReadTime) {
-      lastReadIndex = index;
-    } else {
+    if (new Date(messages[index].createdAt).getTime() > lastReadTime) {
       break;
     }
+
+    lastReadIndex = index;
   }
 
   return messages[Math.max(0, lastReadIndex)].id;
+}
+
+function compareMessageSequence(left: Message, right: Message) {
+  const leftSequence = BigInt(left.sequence);
+  const rightSequence = BigInt(right.sequence);
+  return leftSequence < rightSequence ? -1 : leftSequence > rightSequence ? 1 : 0;
 }
 
 function formatTime(value: string) {
