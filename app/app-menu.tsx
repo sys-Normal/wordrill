@@ -4,6 +4,7 @@ import { useState } from "react";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { LogOut, MessagesSquare, Settings, UsersRound } from "lucide-react";
+import NavTestModeToggle from "./nav-test-mode-toggle";
 import NavThemeToggle from "./nav-theme-toggle";
 
 type AppMenuProps = {
@@ -14,6 +15,10 @@ type AppMenuProps = {
 export default function AppMenu({ isAuthenticated, onSignOut }: AppMenuProps) {
   const pathname = usePathname();
   const [open, setOpen] = useState(false);
+  const roomsActive = isCurrentRoute(pathname, "/rooms");
+  const usersActive = isCurrentRoute(pathname, "/users");
+  const guestActive = isCurrentRoute(pathname, "/guest");
+  const settingsActive = isCurrentRoute(pathname, "/settings");
 
   return (
     <aside className={`appMenu ${open ? "menuOpen" : ""}`} aria-label="Main menu">
@@ -37,8 +42,9 @@ export default function AppMenu({ isAuthenticated, onSignOut }: AppMenuProps) {
           {isAuthenticated ? (
             <>
               <Link
+                aria-current={roomsActive ? "page" : undefined}
                 aria-label="Rooms"
-                className="menuLink menuIconAction"
+                className={getMenuLinkClassName(roomsActive)}
                 href="/rooms"
                 title="Rooms"
               >
@@ -46,8 +52,9 @@ export default function AppMenu({ isAuthenticated, onSignOut }: AppMenuProps) {
                 <span className="menuLabel">Rooms</span>
               </Link>
               <Link
+                aria-current={usersActive ? "page" : undefined}
                 aria-label="Users"
-                className="menuLink menuIconAction"
+                className={getMenuLinkClassName(usersActive)}
                 href="/users"
                 title="Users"
               >
@@ -57,8 +64,9 @@ export default function AppMenu({ isAuthenticated, onSignOut }: AppMenuProps) {
             </>
           ) : pathname === "/guest" ? (
             <Link
+              aria-current={guestActive ? "page" : undefined}
               aria-label="Public Rooms"
-              className="menuLink menuIconAction"
+              className={getMenuLinkClassName(guestActive)}
               href="/guest"
               title="Public Rooms"
             >
@@ -68,12 +76,14 @@ export default function AppMenu({ isAuthenticated, onSignOut }: AppMenuProps) {
           ) : null}
         </div>
         <div className="menuBottom">
+          <NavTestModeToggle />
           <NavThemeToggle expanded={open} />
           {isAuthenticated ? (
             <>
               <Link
+                aria-current={settingsActive ? "page" : undefined}
                 aria-label="설정"
-                className={`menuLink menuIconAction ${pathname === "/settings" ? "active" : ""}`}
+                className={getMenuLinkClassName(settingsActive)}
                 href="/settings"
                 title="설정"
               >
@@ -98,4 +108,12 @@ export default function AppMenu({ isAuthenticated, onSignOut }: AppMenuProps) {
       </nav>
     </aside>
   );
+}
+
+function isCurrentRoute(pathname: string, href: string) {
+  return pathname === href || pathname.startsWith(`${href}/`);
+}
+
+function getMenuLinkClassName(active: boolean) {
+  return `menuLink menuIconAction${active ? " active" : ""}`;
 }

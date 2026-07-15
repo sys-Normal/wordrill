@@ -401,6 +401,7 @@ input:focus {
 }
 
 .menuLink {
+  position: relative;
   min-height: 40px;
   display: flex;
   align-items: center;
@@ -412,10 +413,36 @@ input:focus {
   font-weight: 800;
 }
 
-.menuLink:hover,
-.menuLink.active {
+.menuLink:hover {
   border-color: var(--line);
   background: var(--hover);
+}
+
+.menuLink.active {
+  border-color: transparent;
+  background: var(--accent-soft);
+  color: var(--accent);
+}
+
+.menuLink.active:hover {
+  border-color: transparent;
+  background: var(--accent-soft);
+}
+
+.menuLink.active::before {
+  content: "";
+  position: absolute;
+  top: 8px;
+  bottom: 8px;
+  left: 0;
+  width: 3px;
+  border-radius: 0 999px 999px 0;
+  background: var(--accent);
+}
+
+.menuLink:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
 }
 
 .menuAction {
@@ -459,6 +486,20 @@ input:focus {
 
 .navThemeToggle svg {
   color: var(--accent);
+}
+
+.navTestModeToggle[aria-pressed="true"] {
+  border-color: var(--accent);
+  background: var(--accent-soft);
+  color: var(--accent);
+}
+
+.navTestModeToggle[aria-pressed="true"]:hover {
+  background: var(--accent-soft);
+}
+
+.navTestModeToggle[aria-pressed="true"] svg {
+  fill: currentColor;
 }
 
 .srOnly {
@@ -914,6 +955,69 @@ h1 {
 
 .roomListItem {
   min-width: 0;
+}
+
+.roomSkeletonItem {
+  min-height: 72px;
+  display: grid;
+  grid-template-columns: 48px minmax(0, 1fr);
+  align-items: center;
+  gap: 12px;
+  border-bottom: 1px solid var(--line);
+  background: var(--panel);
+  padding: 10px 12px;
+}
+
+.roomSkeletonItem:last-child {
+  border-bottom: 0;
+}
+
+.roomSkeletonAvatar,
+.roomSkeletonLine {
+  background: var(--line);
+  animation: roomSkeletonPulse 1.4s ease-in-out infinite;
+}
+
+.roomSkeletonAvatar {
+  width: 48px;
+  height: 48px;
+  border-radius: 12px;
+}
+
+.roomSkeletonSummary {
+  display: grid;
+  gap: 9px;
+}
+
+.roomSkeletonLine {
+  height: 12px;
+  border-radius: 999px;
+}
+
+.roomSkeletonTitle {
+  width: min(42%, 220px);
+}
+
+.roomSkeletonMessage {
+  width: min(68%, 380px);
+}
+
+@keyframes roomSkeletonPulse {
+  0%,
+  100% {
+    opacity: 0.5;
+  }
+
+  50% {
+    opacity: 0.9;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .roomSkeletonAvatar,
+  .roomSkeletonLine {
+    animation: none;
+  }
 }
 
 .editingRoomList .roomListItem {

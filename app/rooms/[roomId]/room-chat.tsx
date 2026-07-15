@@ -84,6 +84,8 @@ type RoomChatProps = {
   };
 };
 
+type JoinStatus = "waiting" | "joining" | "joined" | "error";
+
 export default function RoomChat({ initialRoom }: RoomChatProps) {
   const roomId = initialRoom.id;
   const { data: session, status } = useSession();
@@ -108,7 +110,7 @@ export default function RoomChat({ initialRoom }: RoomChatProps) {
   const [mentionActiveIndex, setMentionActiveIndex] = useState(0);
   const [selectedMentionUsers, setSelectedMentionUsers] = useState<User[]>([]);
   const [currentUserId, setCurrentUserId] = useState<string | null>(null);
-  const [joined, setJoined] = useState(false);
+  const [joinStatus, setJoinStatus] = useState<JoinStatus>("waiting");
   const [messages, setMessages] = useState<Message[]>([]);
   const [historyCursor, setHistoryCursor] = useState<string | null>(null);
   const [historyHasMore, setHistoryHasMore] = useState(false);
@@ -116,6 +118,7 @@ export default function RoomChat({ initialRoom }: RoomChatProps) {
   const [historyError, setHistoryError] = useState("");
   const [presence, setPresence] = useState<Presence>({ count: 0, users: [] });
   const [profileLoaded, setProfileLoaded] = useState(false);
+  const [nicknameRequired, setNicknameRequired] = useState(false);
   const [loginIdentifier, setLoginIdentifier] = useState("");
   const [loginPassword, setLoginPassword] = useState("");
   const [loginError, setLoginError] = useState("");
@@ -124,6 +127,7 @@ export default function RoomChat({ initialRoom }: RoomChatProps) {
   const [sendError, setSendError] = useState("");
   const [socketConnected, setSocketConnected] = useState(false);
   const isAuthenticated = status === "authenticated";
+  const joined = joinStatus === "joined";
   const sessionName = session?.user?.name || session?.user?.email || "";
 
   const visiblePresence = useMemo<Presence>(() => {
@@ -190,7 +194,7 @@ export default function RoomChat({ initialRoom }: RoomChatProps) {
 
     const handleDisconnect = () => {
       setSocketConnected(false);
-      setJoined(false);
+      setJoinStatus("waiting");
       setPresence({ count: 0, users: [] });
     };
 
@@ -241,7 +245,7 @@ export default function RoomChat({ initialRoom }: RoomChatProps) {
     socket.on("connect", handleConnect);
     socket.on("connect_error", () => {
       setSocketConnected(false);
-      setJoined(false);
+      setJoinStatus("error");
       setJoinError("실시간 서버 인증에 실패했습니다. 로그인 상태를 다시 확인해주세요.");
     });
     socket.on("disconnect", handleDisconnect);
@@ -394,6 +398,8 @@ export default function RoomChat({ initialRoom }: RoomChatProps) {
     }
 
     setProfileLoaded(false);
+    setNicknameRequired(false);
+    setJoinStatus("waiting");
     setJoinError("");
     fetch("/api/profile")
       .then((response) => response.json())
@@ -407,10 +413,22 @@ export default function RoomChat({ initialRoom }: RoomChatProps) {
 
         if (nextNickname) {
           setNickname(nextNickname);
+          setNicknameRequired(false);
+        } else {
+          setNicknameRequired(true);
         }
 
       })
-      .catch(() => undefined)
+      .catch(() => {
+        const fallbackNickname = normalizeNickname(sessionName);
+
+        if (fallbackNickname) {
+          setNickname(fallbackNickname);
+          setNicknameRequired(false);
+        } else {
+          setNicknameRequired(true);
+        }
+      })
       .finally(() => setProfileLoaded(true));
   }, [session?.user?.id, sessionName, status]);
 
@@ -420,7 +438,8 @@ export default function RoomChat({ initialRoom }: RoomChatProps) {
       !socketConnected ||
       !isAuthenticated ||
       !profileLoaded ||
-      joined ||
+      nicknameRequired ||
+      joinStatus !== "waiting" ||
       !nickname ||
       !roomId
     ) {
@@ -430,8 +449,9 @@ export default function RoomChat({ initialRoom }: RoomChatProps) {
     joinSocketRoom();
   }, [
     isAuthenticated,
-    joined,
+    joinStatus,
     nickname,
+    nicknameRequired,
     profileLoaded,
     roomId,
     socket,
@@ -439,6 +459,9 @@ export default function RoomChat({ initialRoom }: RoomChatProps) {
   ]);
 
   async function joinSocketRoom() {
+    setJoinStatus("joining");
+    setJoinError("");
+
     try {
       const response = await fetch(`/api/rooms/${encodeURIComponent(roomId)}/join`, {
         method: "POST"
@@ -450,6 +473,7 @@ export default function RoomChat({ initialRoom }: RoomChatProps) {
             ? "존재하지 않는 채팅방입니다."
             : "채팅방 참여 정보를 등록하지 못했습니다."
         );
+        setJoinStatus("error");
         return;
       }
 
@@ -468,13 +492,16 @@ export default function RoomChat({ initialRoom }: RoomChatProps) {
           );
           setRoomName(result.room?.name || data.room?.name || "Chat room");
           setJoinError("");
-          setJoined(true);
+          setNicknameRequired(false);
+          setJoinStatus("joined");
         } else {
           setJoinError(result?.error || "채팅방에 입장하지 못했습니다.");
+          setJoinStatus("error");
         }
       });
     } catch {
       setJoinError("채팅방 참여 정보를 등록하지 못했습니다.");
+      setJoinStatus("error");
     }
   }
 
@@ -482,13 +509,30 @@ export default function RoomChat({ initialRoom }: RoomChatProps) {
     event.preventDefault();
     setJoinError("");
 
+    if (!normalizeNickname(nickname)) {
+      setJoinError("닉네임을 입력해주세요.");
+      return;
+    }
+
+    setNicknameRequired(false);
+
     if (!socketRef.current?.connected) {
       socketRef.current?.connect();
+      setJoinStatus("waiting");
       setJoinError("서버에 다시 연결하고 있습니다. 잠시 후 다시 시도해주세요.");
       return;
     }
 
     joinSocketRoom();
+  }
+
+  function retryJoinRoom() {
+    setJoinError("");
+    setJoinStatus("waiting");
+
+    if (!socketRef.current?.connected) {
+      socketRef.current?.connect();
+    }
   }
 
   async function handleSignOut() {
@@ -734,7 +778,7 @@ export default function RoomChat({ initialRoom }: RoomChatProps) {
           <div className="authView">
             <p className="authTitle">프로필을 불러오고 있습니다.</p>
           </div>
-        ) : !joined ? (
+        ) : nicknameRequired ? (
           <div className="joinView">
             <form className="joinForm" onSubmit={joinRoom}>
               <label htmlFor="nickname">Nickname</label>
@@ -751,6 +795,18 @@ export default function RoomChat({ initialRoom }: RoomChatProps) {
               </div>
               {joinError ? <p className="authError">{joinError}</p> : null}
             </form>
+          </div>
+        ) : !joined ? (
+          <div className="authView">
+            <div className="authContent">
+              <p className="authTitle">
+                {joinStatus === "error" ? "채팅방에 입장하지 못했습니다." : "채팅방에 입장하고 있습니다."}
+              </p>
+              {joinError ? <p className="authError">{joinError}</p> : null}
+              {joinStatus === "error" ? (
+                <button type="button" onClick={retryJoinRoom}>다시 시도</button>
+              ) : null}
+            </div>
           </div>
         ) : (
           <div className="roomView">

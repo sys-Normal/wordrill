@@ -10,6 +10,11 @@ export const browserStorageItems = {
   },
   local: {
     preferences: {
+      testMode: {
+        category: "developer-preferences",
+        description: "Persists local-only UI test mode across browser sessions.",
+        key: "wordrill:preferences:test-mode"
+      },
       theme: {
         category: "appearance-preferences",
         description: "Persists the selected light or dark color theme across browser sessions.",
@@ -27,6 +32,7 @@ export const browserStorageKeys = {
   },
   local: {
     preferences: {
+      testMode: browserStorageItems.local.preferences.testMode.key,
       theme: browserStorageItems.local.preferences.theme.key
     }
   }

@@ -4,6 +4,7 @@ import type { ReactNode } from "react";
 import { SessionProvider } from "next-auth/react";
 import { OnlinePresenceProvider } from "./online-presence";
 import RecentLoginRecorder from "./recent-login-recorder";
+import { TestModeProvider } from "./test-mode";
 
 type ProvidersProps = {
   children: ReactNode;
@@ -12,8 +13,10 @@ type ProvidersProps = {
 export function Providers({ children }: ProvidersProps) {
   return (
     <SessionProvider>
-      <RecentLoginRecorder />
-      <OnlinePresenceProvider>{children}</OnlinePresenceProvider>
+      <TestModeProvider>
+        <RecentLoginRecorder />
+        <OnlinePresenceProvider>{children}</OnlinePresenceProvider>
+      </TestModeProvider>
     </SessionProvider>
   );
 }

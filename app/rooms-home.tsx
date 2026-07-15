@@ -12,11 +12,14 @@ import {
   browserStorageKeys,
   removeSessionStorageItem
 } from "../lib/browser-storage";
+import { delay } from "../lib/delay";
 import {
   type RoomSummary,
   sortRoomSummaries
 } from "../lib/room-summary-types";
 import AppMenu from "./app-menu";
+import RoomListSkeleton from "./room-list-skeleton";
+import { useTestMode } from "./test-mode";
 
 type RoomsHomeProps = {
   screen: "login" | "rooms";
@@ -27,9 +30,12 @@ type RecentAccount = {
   label: string;
 };
 
+const ROOM_LIST_TEST_DELAY_MS = 1200;
+
 export default function RoomsHome({ screen }: RoomsHomeProps) {
   const router = useRouter();
   const { status } = useSession();
+  const { testModeEnabled, testModeReady } = useTestMode();
   const roomEventVersionRef = useRef(0);
   const [rooms, setRooms] = useState<RoomSummary[]>([]);
   const [loadingRooms, setLoadingRooms] = useState(false);
@@ -62,7 +68,7 @@ export default function RoomsHome({ screen }: RoomsHomeProps) {
     ));
   }, [roomSearch, rooms]);
 
-  const loadRooms = useCallback(async (showLoading = false) => {
+  const loadRooms = useCallback(async (showLoading = false, applyTestDelay = false) => {
     const eventVersionAtStart = roomEventVersionRef.current;
 
     if (showLoading) {
@@ -71,7 +77,13 @@ export default function RoomsHome({ screen }: RoomsHomeProps) {
     setRoomError("");
 
     try {
-      const response = await fetch("/api/rooms", { cache: "no-store" });
+      const responsePromise = fetch("/api/rooms", { cache: "no-store" });
+
+      if (showLoading && applyTestDelay) {
+        await delay(ROOM_LIST_TEST_DELAY_MS);
+      }
+
+      const response = await responsePromise;
 
       if (!response.ok) {
         throw new Error("Failed to load rooms.");
@@ -107,12 +119,12 @@ export default function RoomsHome({ screen }: RoomsHomeProps) {
   }, [isAuthenticated, router, screen, status]);
 
   useEffect(() => {
-    if (!isAuthenticated || screen !== "rooms") {
+    if (!isAuthenticated || screen !== "rooms" || !testModeReady) {
       return;
     }
 
-    void loadRooms(true);
-  }, [isAuthenticated, loadRooms, screen]);
+    void loadRooms(true, testModeEnabled);
+  }, [isAuthenticated, loadRooms, screen, testModeEnabled, testModeReady]);
 
   useEffect(() => {
     if (!isAuthenticated || screen !== "rooms") {
@@ -446,7 +458,7 @@ export default function RoomsHome({ screen }: RoomsHomeProps) {
             {roomError ? <p className="authError">{roomError}</p> : null}
 
             {loadingRooms ? (
-              <p className="roomsStatus">채팅방 목록을 불러오고 있습니다.</p>
+              <RoomListSkeleton />
             ) : (
               filteredRooms.length ? (
               <ul className={`roomList ${editingRooms ? "editingRoomList" : ""}`}>
@@ -505,7 +517,9 @@ export default function RoomsHome({ screen }: RoomsHomeProps) {
                 ))}
               </ul>
               ) : (
-                <p className="roomsStatus">검색 결과가 없습니다.</p>
+                <p className="roomsStatus">
+                  {rooms.length ? "검색 결과가 없습니다." : "참여하고 있는 방이 없습니다."}
+                </p>
               )
             )}
           </div>
@@ -628,19 +642,35 @@ function formatLastMessage(room: RoomSummary) {
 function formatRoomTime(value: string) {
   const date = new Date(value);
   const now = new Date();
-  const isToday = date.toDateString() === now.toDateString();
+  const calendarDaysAgo = getCalendarDayNumber(now) - getCalendarDayNumber(date);
 
-  if (isToday) {
+  if (calendarDaysAgo === 0) {
     return new Intl.DateTimeFormat("ko-KR", {
       hour: "numeric",
       minute: "2-digit"
     }).format(date);
   }
 
-  return new Intl.DateTimeFormat("ko-KR", {
-    month: "2-digit",
-    day: "2-digit"
-  }).format(date);
+  if (calendarDaysAgo === 1) {
+    return "어제";
+  }
+
+  if (calendarDaysAgo > 1 && calendarDaysAgo < 7) {
+    return new Intl.DateTimeFormat("ko-KR", { weekday: "long" }).format(date);
+  }
+
+  const month = String(date.getMonth() + 1).padStart(2, "0");
+  const day = String(date.getDate()).padStart(2, "0");
+
+  if (date.getFullYear() === now.getFullYear()) {
+    return `${month}.${day}`;
+  }
+
+  return `${date.getFullYear()}.${month}.${day}`;
+}
+
+function getCalendarDayNumber(date: Date) {
+  return Math.floor(Date.UTC(date.getFullYear(), date.getMonth(), date.getDate()) / 86_400_000);
 }
 
 function upsertRoomSummary(rooms: RoomSummary[], updatedRoom: RoomSummary) {
