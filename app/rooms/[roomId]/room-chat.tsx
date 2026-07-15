@@ -91,6 +91,8 @@ export default function RoomChat({ initialRoom }: RoomChatProps) {
   const { data: session, status } = useSession();
   const socketRef = useRef<Socket | null>(null);
   const draftInputRef = useRef<HTMLInputElement | null>(null);
+  const sendButtonRef = useRef<HTMLButtonElement | null>(null);
+  const hasAutoFocusedDraftRef = useRef(false);
   const messagesRef = useRef<HTMLOListElement | null>(null);
   const hasInitialScrollRef = useRef(false);
   const initialLastReadAtRef = useRef<string | null>(null);
@@ -268,6 +270,37 @@ export default function RoomChat({ initialRoom }: RoomChatProps) {
       socketRef.current = null;
     };
   }, [socket]);
+
+  useEffect(() => {
+    if (!joined || hasAutoFocusedDraftRef.current) {
+      return;
+    }
+
+    if (!window.matchMedia("(hover: hover) and (pointer: fine)").matches) {
+      hasAutoFocusedDraftRef.current = true;
+      return;
+    }
+
+    const frameId = window.requestAnimationFrame(() => {
+      if (hasAutoFocusedDraftRef.current) {
+        return;
+      }
+
+      hasAutoFocusedDraftRef.current = true;
+
+      const activeElement = document.activeElement;
+      const canMoveFocus = !activeElement || (
+        activeElement === document.body ||
+        activeElement === document.documentElement
+      );
+
+      if (canMoveFocus) {
+        draftInputRef.current?.focus({ preventScroll: true });
+      }
+    });
+
+    return () => window.cancelAnimationFrame(frameId);
+  }, [joined]);
 
   useEffect(() => {
     const container = messagesRef.current;
@@ -601,9 +634,11 @@ export default function RoomChat({ initialRoom }: RoomChatProps) {
 
   async function sendMessage(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
+    const shouldRestoreDraftFocus = event.currentTarget.contains(document.activeElement);
     const text = draft.trim();
 
     if (!text || messageSending) {
+      restoreDraftFocusAfterSend(shouldRestoreDraftFocus);
       return;
     }
 
@@ -613,6 +648,7 @@ export default function RoomChat({ initialRoom }: RoomChatProps) {
 
     if (!socket?.connected) {
       setSendError("서버 연결을 확인한 뒤 다시 시도해주세요.");
+      restoreDraftFocusAfterSend(shouldRestoreDraftFocus);
       return;
     }
 
@@ -630,12 +666,34 @@ export default function RoomChat({ initialRoom }: RoomChatProps) {
 
     if (!result.ok) {
       setSendError(result.error || "메시지를 전송하지 못했습니다.");
+      restoreDraftFocusAfterSend(shouldRestoreDraftFocus);
       return;
     }
 
     setDraft("");
     setMentionSearch(null);
     setSelectedMentionUsers([]);
+    restoreDraftFocusAfterSend(shouldRestoreDraftFocus);
+  }
+
+  function restoreDraftFocusAfterSend(shouldRestore: boolean) {
+    if (!shouldRestore) {
+      return;
+    }
+
+    window.requestAnimationFrame(() => {
+      const activeElement = document.activeElement;
+      const canRestoreFocus = !activeElement || (
+        activeElement === document.body ||
+        activeElement === document.documentElement ||
+        activeElement === draftInputRef.current ||
+        activeElement === sendButtonRef.current
+      );
+
+      if (canRestoreFocus) {
+        draftInputRef.current?.focus({ preventScroll: true });
+      }
+    });
   }
 
   function updateDraft(event: ChangeEvent<HTMLInputElement>) {
@@ -931,7 +989,7 @@ export default function RoomChat({ initialRoom }: RoomChatProps) {
                     onKeyDown={handleDraftKeyDown}
                   />
                 </div>
-                <button disabled={messageSending} type="submit">
+                <button ref={sendButtonRef} disabled={messageSending} type="submit">
                   {messageSending ? "Sending…" : "Send"}
                 </button>
               </form>
