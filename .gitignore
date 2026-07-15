@@ -3,6 +3,8 @@ node_modules/
 *.tsbuildinfo
 npm-debug.log*
 dev-server*.log
+prod-server*.log
+.codex-*.log
 .env
 .env*.local
 .DS_Store
